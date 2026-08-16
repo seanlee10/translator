@@ -6,8 +6,8 @@ node_modules/
 .venv/
 dist/
 
-# Global gitignore excludes "docs"; specs live there and must be tracked.
-!docs/
+# docs/ must stay private — not tracked, not published.
+docs/
 
 # Global gitignore excludes CLAUDE.md; this repo tracks it.
 !CLAUDE.md
