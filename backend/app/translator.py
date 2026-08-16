@@ -19,8 +19,9 @@ Do not translate the context; translate only the final line.
 """
 
 _LABEL_PREFIXES = ("korean:", "translation:", "번역:", "한국어:")
-_QUOTES = "\"'“”‘’"
+_QUOTE_PAIRS = {'"': '"', "'": "'", "“": "”", "‘": "’"}
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_CLEAN_PASSES = 3
 
 
 class Provider(Protocol):
@@ -44,22 +45,44 @@ def build_user_prompt(text: str, context: Sequence[ContextPair]) -> str:
     return "\n\n".join(parts)
 
 
+def _strip_matching_quote_pair(s: str) -> str:
+    """Strip one layer of quotes, but only a genuine matching pair.
+
+    A mismatched pair (e.g. a curly open quote with a straight apostrophe) is
+    left alone: it's more likely real punctuation than an artifact wrapper.
+    """
+    if len(s) >= 2 and s[0] in _QUOTE_PAIRS and s[-1] == _QUOTE_PAIRS[s[0]]:
+        return s[1:-1].strip()
+    return s
+
+
 def clean_output(raw: str) -> str:
     """Strip artifacts models emit despite instructions.
 
     The <think> stripping is belt-and-braces for the Groq/Qwen path: reasoning
     is disabled at the API level, but a leaked block must never reach the UI.
+
+    A label and a quote wrapper can nest in either order (e.g. `"Korean: X"`
+    or `Korean: "X"`), so the passes run repeatedly until the string stops
+    changing, rather than once each in a fixed order. Bounded so a pathological
+    input can never spin.
     """
-    result = _THINK_BLOCK.sub("", raw).strip()
+    result = raw
+    for _ in range(_CLEAN_PASSES):
+        previous = result
 
-    lowered = result.lower()
-    for prefix in _LABEL_PREFIXES:
-        if lowered.startswith(prefix):
-            result = result[len(prefix) :].strip()
+        result = _THINK_BLOCK.sub("", result).strip()
+
+        lowered = result.lower()
+        for prefix in _LABEL_PREFIXES:
+            if lowered.startswith(prefix):
+                result = result[len(prefix) :].strip()
+                break
+
+        result = _strip_matching_quote_pair(result)
+
+        if result == previous:
             break
-
-    if len(result) >= 2 and result[0] in _QUOTES and result[-1] in _QUOTES:
-        result = result[1:-1].strip()
 
     return result
 
@@ -82,7 +105,6 @@ class TranslatorRouter:
         self._settings = settings
         self._now = now
         self._system = build_system_prompt(settings)
-        self._current: ProviderName = default
         self.set_provider(default)
 
     @property

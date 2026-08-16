@@ -66,6 +66,10 @@ def test_user_prompt_without_context_is_still_valid():
         ("Korean: 안녕하세요", "안녕하세요"),
         ("번역: 안녕하세요", "안녕하세요"),
         ("<think>reasoning</think>안녕하세요", "안녕하세요"),
+        ('"Korean: 안녕하세요"', "안녕하세요"),
+        ('Korean: "안녕하세요"', "안녕하세요"),
+        ("“안녕하세요'", "“안녕하세요'"),
+        ('<think>reasoning</think>"안녕하세요"', "안녕하세요"),
     ],
 )
 def test_output_is_stripped_of_quotes_labels_and_think_blocks(raw, expected):
@@ -134,3 +138,7 @@ def test_unknown_provider_is_rejected():
 
     with pytest.raises(ValueError):
         router.set_provider("nope")
+
+    # A rejected switch must leave the router pointing at its prior provider,
+    # not at the invalid name — otherwise the next translate() would KeyError.
+    assert router.current_provider == "anthropic"
