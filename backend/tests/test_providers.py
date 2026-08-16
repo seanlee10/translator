@@ -243,3 +243,35 @@ def test_a_whitespace_only_key_is_reported_as_not_configured():
 
     assert specs == []
     assert build_providers(settings) == {}
+
+
+def test_provider_base_urls_match_what_each_sdk_expects():
+    """Each SDK owns a different amount of the URL path.
+
+    The groq SDK appends "/openai/v1/chat/completions" to its base_url, so a
+    base_url that already carries "/openai/v1" produces a doubled path and a
+    live 404: "Unknown request URL: POST /openai/v1/openai/v1/chat/completions".
+    That shipped and was only caught by a user running the app.
+
+    The xAI provider goes through the generic openai client instead, which does
+    NOT add a version segment — so there the full versioned path is required.
+    The two are asymmetric on purpose; this pins both halves.
+    """
+    settings = make_settings()
+
+    assert settings.groq_base_url == "https://api.groq.com"
+    assert not settings.groq_base_url.rstrip("/").endswith("/openai/v1")
+    assert settings.xai_base_url.rstrip("/").endswith("/v1")
+
+
+def test_constructed_groq_client_resolves_to_a_single_openai_v1_segment():
+    """Guards the same bug at the layer that actually builds the client."""
+    from groq import AsyncGroq
+
+    settings = make_settings()
+    client = AsyncGroq(api_key="unused", base_url=settings.groq_base_url)
+
+    resolved = f"{str(client.base_url).rstrip('/')}/openai/v1/chat/completions"
+
+    assert resolved == "https://api.groq.com/openai/v1/chat/completions"
+    assert resolved.count("/openai/v1") == 1

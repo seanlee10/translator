@@ -44,7 +44,12 @@ class Settings(BaseSettings):
     default_provider: ProviderName = "anthropic"
     anthropic_model: str = "claude-haiku-4-5"
     groq_model: str = "qwen/qwen3.6-27b"
-    groq_base_url: str = "https://api.groq.com/openai/v1"
+    # Host only. The groq SDK appends "/openai/v1/chat/completions" itself, so a
+    # base_url that already carries "/openai/v1" yields a doubled path and a 404
+    # ("Unknown request URL: POST /openai/v1/openai/v1/chat/completions").
+    # xai_base_url below is different: that provider goes through the generic
+    # openai client, which needs the full versioned path.
+    groq_base_url: str = "https://api.groq.com"
     xai_model: str = "grok-4.20-0309-non-reasoning"
     xai_base_url: str = "https://api.x.ai/v1"
     max_tokens: int = 512
