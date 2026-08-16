@@ -154,7 +154,11 @@ export function useCaptionSocket(url: string) {
       );
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) send();
-    else pendingRef.current.push(send);
+    // Only queue while a connection is actually in flight (CONNECTING).
+    // With no socket at all — connect() never called, or already
+    // disconnected — there is nothing to flush this onto later, so treat
+    // it as a no-op rather than letting the queue grow unbounded.
+    else if (ws) pendingRef.current.push(send);
   }, []);
 
   const sendAudio = useCallback((pcm: ArrayBuffer) => {
@@ -172,7 +176,9 @@ export function useCaptionSocket(url: string) {
       const send = () => wsRef.current?.send(JSON.stringify(payload));
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) send();
-      else pendingRef.current.push(send);
+      // See sendStart: only queue while a connection is actually in
+      // flight; with no socket at all this is a no-op.
+      else if (ws) pendingRef.current.push(send);
     },
     [],
   );

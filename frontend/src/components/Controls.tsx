@@ -53,18 +53,21 @@ export function Controls(props: Props) {
         </select>
       </label>
 
-      <select
-        value={props.deviceId ?? ""}
-        onChange={(e) => props.onDeviceChange(e.target.value)}
-        disabled={props.active}
-      >
-        <option value="">Default microphone</option>
-        {props.devices.map((d) => (
-          <option key={d.deviceId} value={d.deviceId}>
-            {d.label || "Microphone"}
-          </option>
-        ))}
-      </select>
+      <label>
+        Microphone
+        <select
+          value={props.deviceId ?? ""}
+          onChange={(e) => props.onDeviceChange(e.target.value)}
+          disabled={props.active}
+        >
+          <option value="">Default microphone</option>
+          {props.devices.map((d) => (
+            <option key={d.deviceId} value={d.deviceId}>
+              {d.label || "Microphone"}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <label>
         Size
