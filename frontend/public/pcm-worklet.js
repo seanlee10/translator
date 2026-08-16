@@ -1,4 +1,6 @@
-// Converts Float32 mono audio to Int16 PCM and posts ~64ms chunks.
+// Converts Float32 mono audio to Int16 PCM and posts chunks of 1024 samples
+// (the actual duration depends on the AudioContext's negotiated sample
+// rate: ~64ms at 16kHz, ~21ms at 48kHz).
 const CHUNK_SAMPLES = 1024;
 
 class PCMWorklet extends AudioWorkletProcessor {
