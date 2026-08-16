@@ -2,6 +2,10 @@ export function selectOverlayDisplay(displays, primaryDisplay) {
   return displays.find((display) => display.id !== primaryDisplay.id) ?? primaryDisplay;
 }
 
+export function isWindowSender(sender, window) {
+  return Boolean(window && sender === window.webContents);
+}
+
 export function createOverlayWindowOptions(bounds, webPreferences = {}) {
   return {
     ...bounds,

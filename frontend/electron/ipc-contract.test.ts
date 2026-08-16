@@ -15,6 +15,9 @@ describe("Electron overlay snapshot handshake", () => {
 
     expect(preload).toContain("requestOverlaySnapshot");
     expect(main).toContain('ipcMain.on("overlay:request-snapshot"');
+    expect(main).toContain("isWindowSender(event.sender, overlayWindow)");
+    expect(main).toContain("isWindowSender(event.sender, controlWindow)");
+    expect(main).not.toContain('webContents.once("did-finish-load"');
 
     const listenerIndex = overlay.indexOf("onOverlaySnapshot");
     const requestIndex = overlay.indexOf("requestOverlaySnapshot");

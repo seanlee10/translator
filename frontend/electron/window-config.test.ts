@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createOverlayWindowOptions,
+  isWindowSender,
   selectOverlayDisplay,
 } from "./window-config.mjs";
 
@@ -44,5 +45,15 @@ describe("createOverlayWindowOptions", () => {
         preload: "/app/electron/preload.mjs",
       },
     });
+  });
+});
+
+describe("isWindowSender", () => {
+  it("accepts only the active window webContents", () => {
+    const windowContents = {};
+
+    expect(isWindowSender(windowContents, { webContents: windowContents })).toBe(true);
+    expect(isWindowSender({}, { webContents: windowContents })).toBe(false);
+    expect(isWindowSender(windowContents, null)).toBe(false);
   });
 });

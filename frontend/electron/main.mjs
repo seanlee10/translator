@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
   createOverlayWindowOptions,
+  isWindowSender,
   selectOverlayDisplay,
 } from "./window-config.mjs";
 
@@ -66,11 +67,6 @@ function createOverlayWindow() {
   overlayWindow.setAutoHideMenuBar(true);
 
   void loadApp(overlayWindow, true);
-  overlayWindow.webContents.once("did-finish-load", () => {
-    if (latestOverlaySnapshot) {
-      overlayWindow?.webContents.send("overlay:snapshot", latestOverlaySnapshot);
-    }
-  });
   overlayWindow.once("ready-to-show", () => overlayWindow?.showInactive());
   overlayWindow.on("closed", () => {
     overlayWindow = null;
@@ -78,11 +74,13 @@ function createOverlayWindow() {
 }
 
 app.whenReady().then(() => {
-  ipcMain.on("overlay:update", (_event, snapshot) => {
+  ipcMain.on("overlay:update", (event, snapshot) => {
+    if (!isWindowSender(event.sender, controlWindow)) return;
     latestOverlaySnapshot = snapshot;
     overlayWindow?.webContents.send("overlay:snapshot", snapshot);
   });
   ipcMain.on("overlay:request-snapshot", (event) => {
+    if (!isWindowSender(event.sender, overlayWindow)) return;
     if (latestOverlaySnapshot) {
       event.sender.send("overlay:snapshot", latestOverlaySnapshot);
     }
