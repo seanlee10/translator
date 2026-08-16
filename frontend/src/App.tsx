@@ -37,8 +37,12 @@ function ControlCenter() {
   // fetched below, and only ever a provider it actually offers.
   const [provider, setProvider] = useState<string | null>(null);
 
-  const { providers, loading: providersLoading, error: providersError } =
-    useProviders();
+  const {
+    providers,
+    loading: providersLoading,
+    error: providersError,
+    refetch: refetchProviders,
+  } = useProviders();
   const socket = useCaptionSocket(WS_URL);
   const audio = useAudioCapture();
   const sessionStartedRef = useRef(false);
@@ -116,6 +120,13 @@ function ControlCenter() {
       return;
     }
 
+    // The initial GET /providers fetch has no automatic retry (see
+    // useProviders), so if the frontend started before the backend came up,
+    // the model list would otherwise stay stuck on its error message
+    // forever. Starting a session is a natural point to retry it — by now
+    // the backend is likely up even if it wasn't at page load.
+    if (providersError) refetchProviders();
+
     socket.connect();
     let started = false;
     await audio.start((pcm, sampleRate) => {
@@ -133,7 +144,7 @@ function ControlCenter() {
       }
       socket.sendAudio(pcm);
     });
-  }, [audio, socket]);
+  }, [audio, socket, providersError, refetchProviders]);
 
   const changeFinalsOnly = (value: boolean) => {
     setFinalsOnly(value);

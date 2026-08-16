@@ -52,12 +52,19 @@ export function Controls(props: Props) {
       <button
         className={`listen-button ${props.active ? "is-active" : ""}`}
         onClick={props.onToggle}
+        disabled={!props.active && props.providersLoading}
       >
         <span className="listen-icon" aria-hidden="true">
           {props.active ? <i className="stop-square" /> : <i className="mic-stem" />}
         </span>
         <span>
-          <strong>{props.active ? "Stop listening" : "Start listening"}</strong>
+          <strong>
+            {props.active
+              ? "Stop listening"
+              : props.providersLoading
+                ? "Loading models…"
+                : "Start listening"}
+          </strong>
           <small>
             {props.active ? "Microphone is live" : "Begin live transcription"}
           </small>
