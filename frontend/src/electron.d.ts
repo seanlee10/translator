@@ -7,6 +7,7 @@ declare global {
       closeOverlay: () => Promise<boolean>;
       isOverlayOpen: () => Promise<boolean>;
       publishOverlaySnapshot: (snapshot: import("./lib/overlay").OverlaySnapshot) => void;
+      requestOverlaySnapshot: () => void;
       onOverlaySnapshot: (
         callback: (snapshot: import("./lib/overlay").OverlaySnapshot) => void,
       ) => () => void;

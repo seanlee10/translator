@@ -82,6 +82,11 @@ app.whenReady().then(() => {
     latestOverlaySnapshot = snapshot;
     overlayWindow?.webContents.send("overlay:snapshot", snapshot);
   });
+  ipcMain.on("overlay:request-snapshot", (event) => {
+    if (latestOverlaySnapshot) {
+      event.sender.send("overlay:snapshot", latestOverlaySnapshot);
+    }
+  });
   ipcMain.handle("overlay:open", () => {
     createOverlayWindow();
     return true;

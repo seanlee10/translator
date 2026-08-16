@@ -22,6 +22,7 @@ export function OverlayView() {
     const stopDesktopListener = window.translatorDesktop?.onOverlaySnapshot(
       (next) => setSnapshot(next),
     );
+    window.translatorDesktop?.requestOverlaySnapshot();
 
     return () => {
       stopDesktopListener?.();
