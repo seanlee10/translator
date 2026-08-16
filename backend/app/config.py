@@ -28,10 +28,16 @@ class Settings(BaseSettings):
     )
 
     # Secrets — never hardcode, never commit.
+    # deepgram_api_key is required: Deepgram is the transcription itself, not
+    # a translation provider, so without it there is no source text at all.
+    # The three translation-provider keys are optional — an unset key simply
+    # means that provider is not advertised (see app/providers/__init__.py's
+    # registry and GET /providers). A server with none of them set still
+    # starts and still transcribes; it just cannot translate.
     deepgram_api_key: str
-    anthropic_api_key: str
-    groq_api_key: str
-    xai_api_key: str
+    anthropic_api_key: str = ""
+    groq_api_key: str = ""
+    xai_api_key: str = ""
 
     # Translation providers
     default_provider: ProviderName = "anthropic"

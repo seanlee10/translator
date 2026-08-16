@@ -4,13 +4,15 @@ import { Controls } from "./components/Controls";
 import { OverlayView } from "./components/OverlayView";
 import { TranscriptView } from "./components/TranscriptView";
 import { useAudioCapture } from "./hooks/useAudioCapture";
-import { useCaptionSocket, type Provider } from "./hooks/useCaptionSocket";
+import { useCaptionSocket } from "./hooks/useCaptionSocket";
+import { useProviders } from "./hooks/useProviders";
 import {
   createOverlaySnapshot,
   OVERLAY_CHANNEL,
   type OverlayMessage,
   type OverlaySnapshot,
 } from "./lib/overlay";
+import { pickInitialProvider } from "./providers";
 import {
   nextTheme,
   normalizeTheme,
@@ -31,8 +33,12 @@ function ControlCenter() {
   );
   const [fontSize, setFontSize] = useState(22);
   const [finalsOnly, setFinalsOnly] = useState(false);
-  const [provider, setProvider] = useState<Provider>("anthropic");
+  // Starts unset: the real choices come from the backend's GET /providers,
+  // fetched below, and only ever a provider it actually offers.
+  const [provider, setProvider] = useState<string | null>(null);
 
+  const { providers, loading: providersLoading, error: providersError } =
+    useProviders();
   const socket = useCaptionSocket(WS_URL);
   const audio = useAudioCapture();
   const sessionStartedRef = useRef(false);
@@ -60,6 +66,15 @@ function ControlCenter() {
   useEffect(() => {
     providerRef.current = provider;
   }, [provider]);
+
+  // Selects the initial model once the server's list arrives. Only fires
+  // while nothing has been picked yet, so it never overrides a user's
+  // in-session choice if the list happens to refresh.
+  useEffect(() => {
+    if (provider === null && providers.length > 0) {
+      setProvider(pickInitialProvider(providers));
+    }
+  }, [providers, provider]);
 
   useEffect(() => {
     const channel = new BroadcastChannel(OVERLAY_CHANNEL);
@@ -108,7 +123,10 @@ function ControlCenter() {
         socket.sendStart(sampleRate);
         socket.sendConfig({
           translateInterims: !finalsOnlyRef.current,
-          provider: providerRef.current,
+          // Omitted entirely when no provider is selected (e.g. the server
+          // has none configured) rather than sending null/undefined —
+          // 'config' expects a real provider id when the key is present.
+          ...(providerRef.current ? { provider: providerRef.current } : {}),
         });
         started = true;
         sessionStartedRef.current = true;
@@ -124,7 +142,7 @@ function ControlCenter() {
     }
   };
 
-  const changeProvider = (value: Provider) => {
+  const changeProvider = (value: string) => {
     setProvider(value);
     if (sessionStartedRef.current) {
       socket.sendConfig({ provider: value });
@@ -193,7 +211,11 @@ function ControlCenter() {
       )}
 
       <div className="workspace">
-        <TranscriptView phrases={socket.phrases} fontSize={fontSize} />
+        <TranscriptView
+          phrases={socket.phrases}
+          fontSize={fontSize}
+          providers={providers}
+        />
         <Controls
           active={audio.active}
           status={socket.status}
@@ -207,6 +229,9 @@ function ControlCenter() {
           onFinalsOnly={changeFinalsOnly}
           provider={provider}
           onProvider={changeProvider}
+          providers={providers}
+          providersLoading={providersLoading}
+          providersError={providersError}
           phrases={socket.phrases}
           onOpenOverlay={openOverlay}
         />

@@ -255,6 +255,7 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .model-toggle strong, .model-toggle small { display: block; white-space: nowrap; }
 .model-toggle strong { font-size: 10px; font-weight: 510; }
 .model-toggle small { margin-top: 1px; color: #62666d; font-size: 8px; }
+.model-empty-message { margin: 0; padding: 9px; border: 1px dashed var(--border); border-radius: 8px; color: #838793; font-size: 10px; line-height: 1.5; }
 .field-label { display: block; margin-bottom: 9px; color: #aeb3bc; font-size: 10px; font-weight: 510; }
 .select-wrap { position: relative; }
 .select-wrap select { width: 100%; height: 37px; padding: 0 30px 0 34px; appearance: none; border: 1px solid var(--border); border-radius: 8px; color: #c3c7ce; background: rgba(255,255,255,.025) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='m1 1 4 4 4-4' stroke='%236b7079' fill='none'/%3E%3C/svg%3E") calc(100% - 12px) center/10px no-repeat; font-size: 10px; }

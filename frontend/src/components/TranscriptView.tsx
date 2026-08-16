@@ -1,20 +1,20 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Phrase } from "../hooks/useCaptionSocket";
-
-const PROVIDER_LABEL: Record<string, string> = {
-  anthropic: "Claude Haiku 4.5",
-  groq: "Qwen 3.6 · Groq",
-  xai: "Grok 4.20 · xAI",
-};
+import { toLabelMap, type ProviderInfo } from "../providers";
 
 interface Props {
   phrases: Phrase[];
   fontSize: number;
+  providers: ProviderInfo[];
 }
 
-export function TranscriptView({ phrases, fontSize }: Props) {
+export function TranscriptView({ phrases, fontSize, providers }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
+  // Labels come from the server now, not a hardcoded map. A caption whose
+  // provider id isn't in the current list (e.g. the server's configured
+  // keys changed since it was translated) falls back to the raw id below.
+  const labelMap = useMemo(() => toLabelMap(providers), [providers]);
 
   useEffect(() => {
     if (pinned && scrollRef.current) {
@@ -91,7 +91,7 @@ export function TranscriptView({ phrases, fontSize }: Props) {
                     <span className="language-tag ko-tag">KO</span>
                     {phrase.provider && (
                       <span className="provenance">
-                        {PROVIDER_LABEL[phrase.provider] ?? phrase.provider}
+                        {labelMap[phrase.provider] ?? phrase.provider}
                         {phrase.latencyMs !== null && ` · ${phrase.latencyMs}ms`}
                       </span>
                     )}

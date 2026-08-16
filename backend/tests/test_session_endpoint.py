@@ -137,6 +137,38 @@ def test_health_endpoint():
     assert build_client().get("/health").json() == {"status": "ok"}
 
 
+# ---- GET /providers ----
+
+
+def test_providers_endpoint_returns_all_three_when_all_keys_are_configured():
+    client = build_client()  # build_client's default helper sets all three
+
+    response = client.get("/providers")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert {p["id"] for p in body} == {"anthropic", "groq", "xai"}
+    assert {
+        "id": "anthropic",
+        "label": "Claude Haiku 4.5",
+        "model": "claude-haiku-4-5",
+    } in body
+
+
+def test_providers_endpoint_returns_only_the_configured_subset():
+    client = build_client(groq_api_key="", xai_api_key="")
+
+    body = client.get("/providers").json()
+
+    assert [p["id"] for p in body] == ["anthropic"]
+
+
+def test_providers_endpoint_returns_an_empty_list_when_no_key_is_configured():
+    client = build_client(anthropic_api_key="", groq_api_key="", xai_api_key="")
+
+    assert client.get("/providers").json() == []
+
+
 def test_a_scripted_utterance_produces_transcript_then_caption():
     client = build_client(translate_interims=False)
     FakeSource.script = [

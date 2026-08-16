@@ -10,7 +10,7 @@ Live caption translator: microphone → Deepgram streaming STT → Claude Haiku 
 # Backend (from backend/)
 pip install -e ".[dev]"
 uvicorn app.main:app --reload          # :8000
-python -m pytest -v                     # 93 tests
+python -m pytest -v                     # 105 tests
 python -m pytest tests/test_pipeline.py::test_a_late_interim_never_overwrites_a_finalized_phrase -v
 
 # Frontend (from frontend/)
@@ -75,6 +75,16 @@ Three API constraints that will produce confusing failures if "cleaned up":
 - **Groq**: `qwen/qwen3.6-27b` is a reasoning model. `reasoning_effort="none"` and `reasoning_format="hidden"` are **mandatory**, not tunable — without them every caption pays a hidden reasoning pass and the latency budget is gone. `clean_output` also strips `<think>` blocks as a second line of defense.
 - **xAI**: `grok-4.20-0309-non-reasoning` is the non-reasoning variant built for speed-critical requests. Unlike Groq/Qwen, there is no reasoning pass to disable — `reasoning_effort`/`reasoning_format` must never be sent to it. It is OpenAI-compatible (`https://api.x.ai/v1`, `/chat/completions`) and uses the `openai` package's `AsyncOpenAI` client rather than the `groq` SDK with a swapped base URL, so the two services can diverge without silently breaking each other.
 
+### Provider discovery: the backend is the single source of truth
+
+`app/providers/__init__.py`'s `PROVIDER_REGISTRY` is the one place the provider set is declared — id, label, the `Settings` attribute holding its model id, the attribute holding its API key, and how to build its client. `build_providers`, `GET /providers`, and `configured_providers()` all derive from it; nothing else hardcodes the trio.
+
+- **Provider keys are optional; `deepgram_api_key` is not.** `anthropic_api_key`, `groq_api_key`, and `xai_api_key` default to `""` in `config.py`. `deepgram_api_key` stays required — it's the transcription itself, not a translation provider. A server with zero translation keys set still starts and still transcribes; it just can't translate.
+- **`build_providers` only constructs clients for configured providers** (non-empty key). An unset key never produces a client that would fail at call time — it simply isn't offered.
+- **`GET /providers`** returns `[{"id", "label", "model"}, ...]` for the configured subset only (a pydantic `ProviderInfo` model, per-provider `model` read from its `model_attr`). The frontend fetches this on mount and builds its model selector from it — there is no hardcoded provider list left anywhere in the frontend.
+- **`DEFAULT_PROVIDER` pointing at an unconfigured provider never fails startup.** `main.py`'s `_default_router_factory` falls back to the first configured provider (registry order) and logs a warning. If *no* provider is configured, the session still opens with `TranslatorRouter.current_provider is None`; `translate()` then raises `RuntimeError("no translation provider is configured")`, which the pipeline's per-phrase failure isolation (`_run_final_worker`'s `try/except` around `_translate_final`) turns into a non-fatal `ErrorOut` — never a dead session.
+- The `ProviderName` literals in `config.py` and `models.py` stay as the full set of *known* provider ids — a type-level concern for the wire schema. Whether one is actually *available* is a runtime concern that belongs to the registry, not the type.
+
 ### Deepgram adapter
 
 - **Every `connect()` parameter must be a `str`** — the SDK types them all `Optional[str]`, so `True`/`16000` fail confusingly at request time. Pass `"true"`, `"16000"`. A test asserts this for all values.
@@ -93,6 +103,8 @@ Three API constraints that will produce confusing failures if "cleaned up":
 - **`fatal` ends the session client-side.** `useCaptionSocket` exposes it and `App` reacts by stopping capture and disconnecting, leaving the error banner visible. `connect()` resets it so a restart is clean.
 - `sessionStartedRef` gates UI-driven `sendConfig`: the server rejects `config` before `start`. Pre-start changes update local state only and are read via refs when the session actually begins.
 - `pcm-worklet.js` exists at **both** `frontend/src/audio/` and `frontend/public/` and the copies must stay byte-identical. AudioWorklets load by URL at runtime and cannot be bundled, so the `public/` copy is the one that actually runs — editing only `src/` silently does nothing.
+- **The model selector is fetched, not hardcoded.** `useProviders` (`src/hooks/useProviders.ts`) calls `GET http://localhost:8000/providers` on mount; `Controls` renders its buttons from that list. `useCaptionSocket`'s `Provider` type is a plain `string` alias now — the set is dynamic, so a union type can't describe it. An **empty** list hides the model selector and shows a message instead of an empty button group; a **failed fetch** surfaces an error rather than leaving the UI silently blank.
+- **Caption provider labels come from the server, never a hardcoded map.** `TranscriptView` no longer has its own `PROVIDER_LABEL`; it derives a label map from the fetched provider list (`src/providers.ts`'s `toLabelMap`) and falls back to the raw provider id if that id isn't in the current list (e.g. a caption translated before a key was removed from the server config).
 
 ## Deliberate limitations
 

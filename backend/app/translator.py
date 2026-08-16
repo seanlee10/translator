@@ -97,7 +97,7 @@ class TranslatorRouter:
     def __init__(
         self,
         providers: dict[ProviderName, Provider],
-        default: ProviderName,
+        default: ProviderName | None,
         settings: Settings,
         now: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -105,10 +105,15 @@ class TranslatorRouter:
         self._settings = settings
         self._now = now
         self._system = build_system_prompt(settings)
-        self.set_provider(default)
+        # default=None means no provider is configured at all (see
+        # main.py's _default_router_factory): the session must still open,
+        # it just cannot translate until one is available.
+        self._current: ProviderName | None = None
+        if default is not None:
+            self.set_provider(default)
 
     @property
-    def current_provider(self) -> ProviderName:
+    def current_provider(self) -> ProviderName | None:
         return self._current
 
     def set_provider(self, name: str) -> None:
@@ -121,6 +126,12 @@ class TranslatorRouter:
     async def translate(
         self, text: str, context: Sequence[ContextPair]
     ) -> TranslationResult:
+        if self._current is None:
+            # Caught by pipeline.py's final worker (per-phrase, non-fatal)
+            # and by the interim path (silently dropped, as any interim
+            # failure is) — no provider key is configured, so translation is
+            # simply unavailable this session.
+            raise RuntimeError("no translation provider is configured")
         provider = self._providers[self._current]
         prompt = build_user_prompt(text, context)
 

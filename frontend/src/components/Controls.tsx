@@ -1,4 +1,5 @@
-import type { Phrase, Provider, Status } from "../hooks/useCaptionSocket";
+import type { Phrase, Status } from "../hooks/useCaptionSocket";
+import type { ProviderInfo } from "../providers";
 
 interface Props {
   active: boolean;
@@ -11,8 +12,11 @@ interface Props {
   onFontSize: (px: number) => void;
   finalsOnly: boolean;
   onFinalsOnly: (v: boolean) => void;
-  provider: Provider;
-  onProvider: (p: Provider) => void;
+  provider: string | null;
+  onProvider: (p: string) => void;
+  providers: ProviderInfo[];
+  providersLoading: boolean;
+  providersError: string | null;
   phrases: Phrase[];
   onOpenOverlay: () => void;
 }
@@ -65,36 +69,35 @@ export function Controls(props: Props) {
         <div className="section-label">
           <span>Translation model</span>
           <span className="section-value">
-            {props.provider === "anthropic"
-              ? "Haiku 4.5"
-              : props.provider === "groq"
-                ? "Qwen 3.6"
-                : "Grok 4.20"}
+            {props.providers.find((p) => p.id === props.provider)?.label ?? ""}
           </span>
         </div>
-        <div className="model-toggle" role="group" aria-label="Translation model">
-          <button
-            className={props.provider === "anthropic" ? "selected" : ""}
-            onClick={() => props.onProvider("anthropic")}
-          >
-            <span className="model-orb anthropic-orb">A</span>
-            <span><strong>Claude</strong><small>Haiku 4.5</small></span>
-          </button>
-          <button
-            className={props.provider === "groq" ? "selected" : ""}
-            onClick={() => props.onProvider("groq")}
-          >
-            <span className="model-orb groq-orb">Q</span>
-            <span><strong>Qwen</strong><small>Groq preview</small></span>
-          </button>
-          <button
-            className={props.provider === "xai" ? "selected" : ""}
-            onClick={() => props.onProvider("xai")}
-          >
-            <span className="model-orb xai-orb">G</span>
-            <span><strong>Grok</strong><small>xAI 4.20</small></span>
-          </button>
-        </div>
+        {props.providers.length === 0 ? (
+          <p className="model-empty-message">
+            {props.providersLoading
+              ? "Loading translation models…"
+              : props.providersError
+                ? "Could not load translation models from the caption server."
+                : "No translation model is configured on the server. Transcription will still work, but captions won't be translated."}
+          </p>
+        ) : (
+          <div className="model-toggle" role="group" aria-label="Translation model">
+            {props.providers.map((p) => (
+              <button
+                key={p.id}
+                className={props.provider === p.id ? "selected" : ""}
+                onClick={() => props.onProvider(p.id)}
+              >
+                <span className={`model-orb ${p.id}-orb`}>
+                  {p.label.charAt(0).toUpperCase()}
+                </span>
+                <span>
+                  <strong>{p.label}</strong>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="control-section">

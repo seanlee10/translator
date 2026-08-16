@@ -40,6 +40,15 @@ class TranslationResult:
 # ---- Outgoing wire messages (server -> browser) ----
 
 
+class ProviderInfo(BaseModel):
+    """One entry of GET /providers — a translation provider the server can
+    actually use, because its API key is configured."""
+
+    id: str
+    label: str
+    model: str
+
+
 class StatusOut(BaseModel):
     type: Literal["status"] = "status"
     state: Literal["connected", "listening", "closed", "reconnecting"]

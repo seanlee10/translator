@@ -9,9 +9,9 @@ from pydantic import BaseModel
 
 from app.config import Settings, get_settings
 from app.deepgram_client import DeepgramSource
-from app.models import ErrorOut, StatusOut
+from app.models import ErrorOut, ProviderInfo, StatusOut
 from app.pipeline import Pipeline
-from app.providers import build_providers
+from app.providers import build_providers, configured_providers
 from app.translator import TranslatorRouter
 
 logger = logging.getLogger(__name__)
@@ -32,9 +32,31 @@ def _default_source_factory(settings: Settings, sample_rate: int):
 
 
 def _default_router_factory(settings: Settings) -> TranslatorRouter:
+    providers = build_providers(settings)
+    default: str | None = settings.default_provider
+    if default not in providers:
+        # DEFAULT_PROVIDER names a provider whose key isn't configured (or
+        # the setting is simply the class default with that key unset). Fall
+        # back to the first configured provider in registry order rather
+        # than failing startup — if we required the key instead, the server
+        # would refuse to start rather than just hiding that provider, and
+        # "provider not configured" would become unreachable.
+        fallback = next(iter(providers), None)
+        if fallback is not None:
+            logger.warning(
+                "DEFAULT_PROVIDER %r is not configured; falling back to %r",
+                default,
+                fallback,
+            )
+        else:
+            logger.warning(
+                "no translation provider is configured; the session will "
+                "still open but translation will fail per-phrase"
+            )
+        default = fallback
     return TranslatorRouter(
-        providers=build_providers(settings),
-        default=settings.default_provider,
+        providers=providers,
+        default=default,
         settings=settings,
     )
 
@@ -80,6 +102,23 @@ app.add_middleware(
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/providers", response_model=list[ProviderInfo])
+def providers() -> list[ProviderInfo]:
+    """The set of translation providers this server can actually use.
+
+    The frontend renders its model selector from this list instead of a
+    hardcoded trio, and only ever advertises a provider whose API key is
+    configured — see app/providers/__init__.py's registry.
+    """
+    settings = _settings()
+    return [
+        ProviderInfo(
+            id=spec.id, label=spec.label, model=getattr(settings, spec.model_attr)
+        )
+        for spec in configured_providers(settings)
+    ]
 
 
 @app.websocket("/ws/session")

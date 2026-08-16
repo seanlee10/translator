@@ -1,4 +1,5 @@
 from app.config import Settings
+from app.providers import PROVIDER_REGISTRY, build_providers, configured_providers
 from app.providers.anthropic_provider import AnthropicProvider
 from app.providers.groq_provider import GroqProvider
 from app.providers.xai_provider import XAIProvider
@@ -184,3 +185,48 @@ async def test_xai_handles_a_null_content_response():
     client = FakeXAIClient(reply=None)
 
     assert await XAIProvider(client, make_settings()).complete("s", "p") == ""
+
+
+# ---- registry-driven construction ----
+
+
+def test_registry_labels_match_the_design():
+    labels = {spec.id: spec.label for spec in PROVIDER_REGISTRY}
+    assert labels == {
+        "anthropic": "Claude Haiku 4.5",
+        "groq": "Qwen 3.6 · Groq",
+        "xai": "Grok 4.20 · xAI",
+    }
+
+
+def test_build_providers_constructs_all_three_when_all_keys_are_configured():
+    providers = build_providers(make_settings())
+
+    assert set(providers) == {"anthropic", "groq", "xai"}
+    assert isinstance(providers["anthropic"], AnthropicProvider)
+    assert isinstance(providers["groq"], GroqProvider)
+    assert isinstance(providers["xai"], XAIProvider)
+
+
+def test_build_providers_constructs_only_the_configured_subset():
+    settings = make_settings(groq_api_key="", xai_api_key="")
+
+    providers = build_providers(settings)
+
+    assert set(providers) == {"anthropic"}
+
+
+def test_build_providers_returns_an_empty_dict_when_no_key_is_configured():
+    settings = make_settings(
+        anthropic_api_key="", groq_api_key="", xai_api_key=""
+    )
+
+    assert build_providers(settings) == {}
+
+
+def test_configured_providers_filters_by_key_and_keeps_registry_order():
+    settings = make_settings(anthropic_api_key="", xai_api_key="")
+
+    specs = configured_providers(settings)
+
+    assert [spec.id for spec in specs] == ["groq"]
