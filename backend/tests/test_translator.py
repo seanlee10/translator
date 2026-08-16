@@ -2,6 +2,7 @@ import pytest
 
 from app.config import Settings
 from app.models import ContextPair
+from app.providers import PROVIDER_REGISTRY
 from app.translator import (
     TranslatorRouter,
     build_system_prompt,
@@ -115,26 +116,27 @@ async def test_switching_provider_routes_subsequent_calls():
     assert len(groq.seen) == 1 and not anthropic.seen
 
 
-async def test_all_three_providers_receive_byte_identical_prompts():
-    anthropic = FakeProvider("anthropic")
-    groq = FakeProvider("groq")
-    xai = FakeProvider("xai")
+async def test_all_registered_providers_receive_byte_identical_prompts():
+    # Parameterized over PROVIDER_REGISTRY rather than hardcoding the three
+    # ids: a fourth registry entry must automatically be covered by this
+    # invariant, not silently skipped.
+    ids = [spec.id for spec in PROVIDER_REGISTRY]
+    fakes = {provider_id: FakeProvider(provider_id) for provider_id in ids}
     router = TranslatorRouter(
-        {"anthropic": anthropic, "groq": groq, "xai": xai},
-        default="anthropic",
+        dict(fakes),
+        default=ids[0],
         settings=make_settings(),
     )
     context = [ContextPair(en="one", ko="하나")]
 
-    await router.translate("hello", context)
-    router.set_provider("groq")
-    await router.translate("hello", context)
-    router.set_provider("xai")
-    await router.translate("hello", context)
+    for provider_id in ids:
+        router.set_provider(provider_id)
+        await router.translate("hello", context)
 
-    # Any quality difference must be the model, not the scaffolding. A third
-    # provider must not weaken this: all three must match, not just a pair.
-    assert anthropic.seen[0] == groq.seen[0] == xai.seen[0]
+    seen_prompts = [fakes[provider_id].seen[0] for provider_id in ids]
+    # Any quality difference must be the model, not the scaffolding. Every
+    # configured provider must match, not just a pair.
+    assert all(prompt == seen_prompts[0] for prompt in seen_prompts)
 
 
 def test_unknown_provider_is_rejected():
