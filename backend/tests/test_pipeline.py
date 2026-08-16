@@ -346,6 +346,12 @@ async def test_an_in_flight_interim_suppresses_a_new_one_rather_than_queueing():
     await pipeline.drain()
     await pipeline.aclose()
 
+    # If the second interim had merely been deferred (queued) instead of
+    # dropped, it would run once the gate opens and "a b c" would appear
+    # here. Re-checking after drain distinguishes dropped-forever from
+    # merely-deferred.
+    assert calls == ["a b"]
+
 
 async def test_a_late_interim_never_overwrites_a_finalized_phrase():
     gate = asyncio.Event()
@@ -368,11 +374,16 @@ async def test_a_late_interim_never_overwrites_a_finalized_phrase():
     await pipeline.handle(TranscriptEvent(phrase_id=0, text="hel", is_final=False))
     clock.advance(500)
     await pipeline.handle(TranscriptEvent(phrase_id=0, text="hello", is_final=False))
-    await asyncio.sleep(0)
+    await asyncio.sleep(0)  # let the interim task start and block on the gate
     await pipeline.handle(TranscriptEvent(phrase_id=0, text="hello!", is_final=True))
-    await pipeline.drain()
 
-    gate.set()  # the stale interim now returns
+    # Release the stalled interim BEFORE draining, so it actually resumes,
+    # reaches the sequence guard, sees state.closed is True, and skips its
+    # emit. Draining first (as an earlier version of this test did) would
+    # deadlock the gate release behind drain()'s wait, so the interim would
+    # only ever "complete" via the real-clock translation_timeout_s timeout
+    # -- masking the guard entirely.
+    gate.set()
     await pipeline.drain()
     await pipeline.aclose()
 
