@@ -84,6 +84,15 @@ export function useCaptionSocket(url: string) {
   }, []);
 
   const connect = useCallback(() => {
+    const existing = wsRef.current;
+    if (existing && existing.readyState !== WebSocket.CLOSED) {
+      // Already connecting/open/closing — avoid leaking a socket and its
+      // listeners by overwriting the ref out from under it.
+      return;
+    }
+
+    setError(null);
+
     const ws = new WebSocket(url);
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
@@ -152,7 +161,15 @@ export function useCaptionSocket(url: string) {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "stop" }));
     }
-    ws?.close();
+    if (ws) {
+      // Detach listeners first: closing is async, and a user-initiated
+      // disconnect must not surface as a connection error via a stray
+      // onerror/onclose firing after we've already moved on.
+      ws.onmessage = null;
+      ws.onerror = null;
+      ws.onclose = null;
+      ws.close();
+    }
     wsRef.current = null;
     setStatus("closed");
   }, []);
