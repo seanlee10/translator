@@ -78,12 +78,21 @@ class Pipeline:
             state = PhraseState(created_at=self._now())
             self._phrases[event.phrase_id] = state
 
+        await self._emit(TranscriptOut(phrase_id=event.phrase_id, en=event.text))
+
         if event.is_final:
+            # The English is published for finals too, *before* the
+            # translation is enqueued. Otherwise a finalized phrase reaches
+            # the browser only inside a successful CaptionOut, and a failed
+            # translation leaves no row at all — just a global error banner.
+            # The spec requires the phrase be published with its English and
+            # an error marker. The client's rank guard treats this as an
+            # interim, so it refines the English of an already-displayed
+            # provisional without regressing its status or blanking Korean.
             state.closed = True
             await self._final_queue.put((event.phrase_id, event.text))
             return
 
-        await self._emit(TranscriptOut(phrase_id=event.phrase_id, en=event.text))
         self._maybe_translate_interim(event, state)
 
     # ---- finals: serialized so context stays in phrase order ----

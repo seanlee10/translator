@@ -13,7 +13,9 @@ from app.translator import (
 def make_settings(**overrides) -> Settings:
     base = dict(deepgram_api_key="d", anthropic_api_key="a", groq_api_key="g")
     base.update(overrides)
-    return Settings(**base)
+    # _env_file=None keeps the suite hermetic: Settings now resolves a real
+    # repo-root .env, and a developer's local one must not change defaults.
+    return Settings(_env_file=None, **base)
 
 
 class FakeProvider:

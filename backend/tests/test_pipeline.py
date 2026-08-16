@@ -16,7 +16,9 @@ from app.pipeline import Pipeline
 def make_settings(**overrides) -> Settings:
     base = dict(deepgram_api_key="d", anthropic_api_key="a", groq_api_key="g")
     base.update(overrides)
-    return Settings(**base)
+    # _env_file=None keeps the suite hermetic: Settings now resolves a real
+    # repo-root .env, and a developer's local one must not change defaults.
+    return Settings(_env_file=None, **base)
 
 
 class FakeTranslator:
@@ -437,3 +439,91 @@ async def test_set_translate_interims_takes_effect_immediately():
     await pipeline.aclose()
 
     assert [text for text, _ in translator.calls] == ["a b c"]
+
+
+async def test_a_final_publishes_its_english_even_when_its_translation_fails():
+    # Spec, Error Handling: "Publish the phrase with its English and an error
+    # marker, no Korean." Before this, a finalized phrase's English reached
+    # the browser only inside a successful CaptionOut, so a run of provider
+    # failures produced no transcript rows at all — just a global banner each
+    # new failure overwrote. Most visible with "Finals only" checked, where
+    # no interim TranscriptOut precedes the final either.
+    class AlwaysFails:
+        async def __call__(self, text, context):
+            raise RuntimeError("provider is down")
+
+    recorder, _ = await run(
+        [TranscriptEvent(phrase_id=0, text="Hello there.", is_final=True)],
+        translator=AlwaysFails(),
+    )
+
+    transcripts = [e for e in recorder.events if isinstance(e, TranscriptOut)]
+    assert [(e.phrase_id, e.en) for e in transcripts] == [(0, "Hello there.")]
+
+    errors = [e for e in recorder.events if isinstance(e, ErrorOut)]
+    assert [e.phrase_id for e in errors] == [0]
+
+    assert recorder.captions() == []  # no Korean, as required
+
+
+async def test_the_finals_english_is_published_before_it_is_enqueued():
+    # Ordering matters: the row must exist while the translation is still in
+    # flight, not only once it resolves.
+    gate = asyncio.Event()
+
+    class Gated:
+        async def __call__(self, text, context):
+            await gate.wait()
+            return TranslationResult(ko=f"[ko]{text}", provider="anthropic", latency_ms=1)
+
+    recorder = Recorder()
+    pipeline = Pipeline(translate=Gated(), emit=recorder, settings=make_settings())
+    await pipeline.start()
+
+    await pipeline.handle(TranscriptEvent(phrase_id=0, text="hello", is_final=True))
+
+    assert [e.en for e in recorder.events if isinstance(e, TranscriptOut)] == ["hello"]
+    assert recorder.captions() == []
+
+    gate.set()
+    await pipeline.drain()
+    await pipeline.aclose()
+
+
+async def test_a_raising_emit_does_not_kill_the_final_worker():
+    # The worker wraps its whole loop body precisely so a failing emit (a
+    # socket write that loses the race with a disconnect, say) cannot take
+    # the worker down and silently stop translating for the rest of the
+    # session. Deleting that guard must fail this test.
+    class ExplodingEmit:
+        def __init__(self):
+            self.events: list[BaseModel] = []
+
+        async def __call__(self, event):
+            if isinstance(event, CaptionOut) and event.phrase_id == 0:
+                raise RuntimeError("socket write failed")
+            self.events.append(event)
+
+        def captions(self) -> list[CaptionOut]:
+            return [e for e in self.events if isinstance(e, CaptionOut)]
+
+    emit = ExplodingEmit()
+    pipeline = Pipeline(
+        translate=FakeTranslator(), emit=emit, settings=make_settings()
+    )
+    await pipeline.start()
+
+    await pipeline.handle(TranscriptEvent(phrase_id=0, text="first", is_final=True))
+    # Bounded: a dead worker never calls task_done(), so an unguarded loop
+    # makes drain() hang rather than fail. wait_for turns that into a fast,
+    # legible failure instead of a 30s suite timeout.
+    await asyncio.wait_for(pipeline.drain(), timeout=2)
+
+    # The worker must still be alive and must still be consuming the queue.
+    assert pipeline._final_worker is not None and not pipeline._final_worker.done()
+
+    await pipeline.handle(TranscriptEvent(phrase_id=1, text="second", is_final=True))
+    await asyncio.wait_for(pipeline.drain(), timeout=2)
+    await pipeline.aclose()
+
+    assert [(c.phrase_id, c.ko) for c in emit.captions()] == [(1, "[ko]second")]

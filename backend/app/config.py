@@ -1,16 +1,30 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ProviderName = Literal["anthropic", "groq"]
 
+# pydantic-settings resolves a bare "env_file" name against the *process CWD*.
+# README documents starting the server from backend/ with .env at the repo
+# root, so a bare ".env" is never found and every key comes back missing.
+# Anchor the paths to this source file instead: config.py lives in
+# backend/app/, so the repo root is two parents up from the package directory.
+APP_DIR = Path(__file__).resolve().parent
+BACKEND_DIR = APP_DIR.parent
+REPO_ROOT = BACKEND_DIR.parent
+
+# Both layouts are accepted. Later entries win, so a backend/.env (if someone
+# keeps one there) overrides the repo-root file rather than being ignored.
+ENV_FILES = (REPO_ROOT / ".env", BACKEND_DIR / ".env")
+
 
 class Settings(BaseSettings):
     """All tunables in one place. Values come from the environment or .env."""
 
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+        env_file=ENV_FILES, env_file_encoding="utf-8", extra="ignore"
     )
 
     # Secrets — never hardcode, never commit.

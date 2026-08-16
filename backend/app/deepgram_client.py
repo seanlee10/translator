@@ -10,6 +10,11 @@ from app.models import TranscriptEvent
 
 logger = logging.getLogger(__name__)
 
+# Deepgram closes an idle stream after ~10s of no audio. The SDK does NOT
+# send keepalives on its own — v7 exposes only a manual send_keep_alive() —
+# so this module runs its own ticker while connected.
+KEEPALIVE_INTERVAL_S = 5.0
+
 
 class DeepgramStreamError(RuntimeError):
     """Raised from events() when the stream ended because of an error,
@@ -91,6 +96,7 @@ class DeepgramSource:
         self._ctx = None
         self._connection = None
         self._listener: asyncio.Task | None = None
+        self._keepalive: asyncio.Task | None = None
         self._error: Exception | None = None
 
     async def connect(self) -> None:
@@ -105,6 +111,25 @@ class DeepgramSource:
 
         # start_listening() blocks while pumping, so it owns a background task.
         self._listener = asyncio.create_task(self._connection.start_listening())
+        self._keepalive = asyncio.create_task(self._run_keepalive())
+
+    async def _run_keepalive(self) -> None:
+        """Hold the stream open through extended silence.
+
+        deepgram-sdk 7.x has no automatic keepalive; send_keep_alive() is the
+        only mechanism it offers. Without this, a pause longer than Deepgram's
+        idle timeout ends the stream mid-session.
+        """
+        while True:
+            await asyncio.sleep(KEEPALIVE_INTERVAL_S)
+            connection = self._connection
+            if connection is None:
+                return
+            try:
+                await connection.send_keep_alive()
+            except Exception:  # noqa: BLE001 - the stream is closing anyway
+                logger.debug("deepgram keepalive failed", exc_info=True)
+                return
 
     async def _on_message(self, message) -> None:
         event = self._tracker.normalize(message_to_dict(message))
@@ -133,9 +158,11 @@ class DeepgramSource:
             yield event
 
     async def aclose(self) -> None:
-        if self._listener is not None:
-            self._listener.cancel()
-            await asyncio.gather(self._listener, return_exceptions=True)
+        tasks = [t for t in (self._listener, self._keepalive) if t is not None]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         if self._ctx is not None:
             try:
                 await self._ctx.__aexit__(None, None, None)

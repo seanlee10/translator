@@ -18,6 +18,14 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Live Caption Translator")
 
+# How long teardown waits for queued final translations before giving up.
+DRAIN_TIMEOUT_S = 2.0
+
+TRANSCRIPTION_ENDED_MESSAGE = (
+    "Transcription ended: the speech-to-text connection was closed. "
+    "Press Stop, then start listening again to resume."
+)
+
 
 def _default_source_factory(settings: Settings, sample_rate: int):
     return DeepgramSource(settings, sample_rate)
@@ -34,6 +42,22 @@ def _default_router_factory(settings: Settings) -> TranslatorRouter:
 app.state.settings = None  # resolved lazily so imports never require a key
 app.state.source_factory = _default_source_factory
 app.state.router_factory = _default_router_factory
+
+
+_TRUE_STRINGS = {"1", "true", "t", "yes", "y", "on"}
+
+
+def _as_bool(value) -> bool:
+    """JSON control values may be real booleans or strings.
+
+    Plain bool() makes the string "false" evaluate to True, which silently
+    inverted the 'Finals only' toggle for any client that sent it as text.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in _TRUE_STRINGS
+    return bool(value)
 
 
 def _settings() -> Settings:
@@ -128,7 +152,7 @@ async def session(ws: WebSocket) -> None:
                         continue
                     if "translate_interims" in control:
                         pipeline.set_translate_interims(
-                            bool(control["translate_interims"])
+                            _as_bool(control["translate_interims"])
                         )
                     if "provider" in control:
                         try:
@@ -141,7 +165,16 @@ async def session(ws: WebSocket) -> None:
 
             else:
                 chunk = message.get("bytes")
-                if chunk is not None and source is not None:
+                # Once the pump has finished the transcription stream is over
+                # (clean close or error) and the user has already been told.
+                # Pushing more audio at a closed socket only produces a raw
+                # library exception like "sent 1000 (OK); then received
+                # 1000 (OK)" on top of the intelligible message.
+                if (
+                    chunk is not None
+                    and source is not None
+                    and (pump is None or not pump.done())
+                ):
                     await source.send_audio(chunk)
 
     except WebSocketDisconnect:
@@ -161,6 +194,16 @@ async def session(ws: WebSocket) -> None:
             with contextlib.suppress(asyncio.CancelledError):
                 await pump
         if pipeline is not None:
+            try:
+                # Let the queued finals finish first: without this, pressing
+                # Stop discards the last phrase's translation and the closing
+                # sentence never gets its Korean. Bounded, so a wedged
+                # provider cannot hang the shutdown path.
+                await asyncio.wait_for(pipeline.drain(), timeout=DRAIN_TIMEOUT_S)
+            except asyncio.TimeoutError:
+                logger.warning("pipeline drain timed out; closing anyway")
+            except Exception:  # noqa: BLE001 - aclose must still run
+                logger.exception("pipeline drain failed")
             try:
                 await pipeline.aclose()
             except Exception:  # noqa: BLE001 - source cleanup must still run
@@ -191,3 +234,17 @@ async def _pump(source, pipeline: Pipeline, emit) -> None:
             await emit(ErrorOut(message=f"transcription failed: {exc}", fatal=True))
         except Exception:  # noqa: BLE001 - socket may already be gone
             pass
+        return
+
+    # The source finished without an error: a clean close (code 1000), which
+    # Deepgram sends on its own for idle timeouts, rotation, and max stream
+    # duration. Returning silently here left the browser with no signal at
+    # all — status still "listening", nothing in the transcript — until the
+    # next audio chunk hit the closed socket and surfaced a raw library
+    # exception. Not fatal: the session is still usable and restartable.
+    logger.info("transcript source ended cleanly")
+    try:
+        await emit(StatusOut(state="closed"))
+        await emit(ErrorOut(message=TRANSCRIPTION_ENDED_MESSAGE, fatal=False))
+    except Exception:  # noqa: BLE001 - socket may already be gone
+        pass

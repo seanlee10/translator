@@ -16,7 +16,9 @@ from app.deepgram_client import (
 def make_settings(**overrides) -> Settings:
     base = dict(deepgram_api_key="secret", anthropic_api_key="a", groq_api_key="g")
     base.update(overrides)
-    return Settings(**base)
+    # _env_file=None keeps the suite hermetic: Settings now resolves a real
+    # repo-root .env, and a developer's local one must not change defaults.
+    return Settings(_env_file=None, **base)
 
 
 def test_connect_params_include_everything_the_policy_depends_on():
@@ -202,3 +204,80 @@ async def test_events_already_queued_are_yielded_before_the_error_is_raised():
             collected.append(event)
 
     assert [event.text for event in collected] == ["hello", "hello there"]
+
+
+# ---- keepalive ----
+#
+# deepgram-sdk 7.x sends no keepalives of its own; send_keep_alive() is the
+# only mechanism it exposes. Without a ticker calling it, a silence longer
+# than Deepgram's idle timeout ends the stream mid-session.
+
+
+class FakeConnection:
+    def __init__(self):
+        self.keep_alives = 0
+
+    async def send_keep_alive(self):
+        self.keep_alives += 1
+
+
+async def test_the_sdk_exposes_only_a_manual_keepalive():
+    # Pins the fact the design doc used to get wrong. If a future SDK ever
+    # does keepalive itself, this is the assertion to revisit.
+    from deepgram.listen.v1.socket_client import AsyncV1SocketClient
+
+    assert hasattr(AsyncV1SocketClient, "send_keep_alive")
+
+
+async def test_keepalive_is_sent_repeatedly_while_connected(monkeypatch):
+    monkeypatch.setattr("app.deepgram_client.KEEPALIVE_INTERVAL_S", 0.01)
+
+    source = DeepgramSource(make_settings(), 16000)
+    connection = FakeConnection()
+    source._connection = connection
+
+    task = asyncio.create_task(source._run_keepalive())
+    await asyncio.sleep(0.05)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    # Repeatedly, not once: a single send would not hold a long silence open.
+    assert connection.keep_alives >= 2
+
+
+async def test_the_keepalive_interval_is_five_seconds():
+    from app.deepgram_client import KEEPALIVE_INTERVAL_S
+
+    assert KEEPALIVE_INTERVAL_S == 5.0
+
+
+async def test_aclose_cancels_the_keepalive_task(monkeypatch):
+    monkeypatch.setattr("app.deepgram_client.KEEPALIVE_INTERVAL_S", 0.01)
+
+    source = DeepgramSource(make_settings(), 16000)
+    source._connection = FakeConnection()
+    source._keepalive = asyncio.create_task(source._run_keepalive())
+
+    await source.aclose()
+
+    assert source._keepalive.cancelled() or source._keepalive.done()
+
+
+async def test_a_failing_keepalive_stops_the_ticker_instead_of_looping(monkeypatch):
+    monkeypatch.setattr("app.deepgram_client.KEEPALIVE_INTERVAL_S", 0.01)
+
+    class Broken:
+        def __init__(self):
+            self.attempts = 0
+
+        async def send_keep_alive(self):
+            self.attempts += 1
+            raise RuntimeError("connection is gone")
+
+    source = DeepgramSource(make_settings(), 16000)
+    broken = Broken()
+    source._connection = broken
+
+    await asyncio.wait_for(source._run_keepalive(), timeout=1)
+
+    assert broken.attempts == 1
