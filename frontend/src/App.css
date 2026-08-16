@@ -244,13 +244,14 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .control-section { margin: 0 16px; padding: 17px 0; border-top: 1px solid var(--border-subtle); }
 .section-label { display: flex; align-items: center; justify-content: space-between; margin-bottom: 11px; color: #aeb3bc; font-size: 10px; font-weight: 510; }
 .section-value { color: #62666d; font-size: 9px; font-weight: 400; }
-.model-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.model-toggle { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; }
 .model-toggle button { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 9px; border: 1px solid var(--border); border-radius: 8px; color: #777c85; text-align: left; background: rgba(255,255,255,.018); transition: all .16s ease; }
 .model-toggle button:hover { background: var(--surface); }
 .model-toggle button.selected { border-color: rgba(113,112,255,.38); color: #e7e8ed; background: rgba(113,112,255,.09); box-shadow: inset 0 0 0 1px rgba(113,112,255,.06); }
 .model-orb { display: grid; flex: 0 0 auto; place-items: center; width: 26px; height: 26px; border-radius: 7px; font-size: 9px; font-weight: 600; }
 .anthropic-orb { color: #e9cab5; background: rgba(191,126,83,.16); }
 .groq-orb { color: #f5a593; background: rgba(237,84,58,.14); }
+.xai-orb { color: #d8dade; background: rgba(255,255,255,.1); }
 .model-toggle strong, .model-toggle small { display: block; white-space: nowrap; }
 .model-toggle strong { font-size: 10px; font-weight: 510; }
 .model-toggle small { margin-top: 1px; color: #62666d; font-size: 8px; }

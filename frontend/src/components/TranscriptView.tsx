@@ -4,6 +4,7 @@ import type { Phrase } from "../hooks/useCaptionSocket";
 const PROVIDER_LABEL: Record<string, string> = {
   anthropic: "Claude Haiku 4.5",
   groq: "Qwen 3.6 · Groq",
+  xai: "Grok 4.20 · xAI",
 };
 
 interface Props {

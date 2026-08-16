@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-ProviderName = Literal["anthropic", "groq"]
+ProviderName = Literal["anthropic", "groq", "xai"]
 
 # pydantic-settings resolves a bare "env_file" name against the *process CWD*.
 # README documents starting the server from backend/ with .env at the repo
@@ -31,12 +31,15 @@ class Settings(BaseSettings):
     deepgram_api_key: str
     anthropic_api_key: str
     groq_api_key: str
+    xai_api_key: str
 
     # Translation providers
     default_provider: ProviderName = "anthropic"
     anthropic_model: str = "claude-haiku-4-5"
     groq_model: str = "qwen/qwen3.6-27b"
     groq_base_url: str = "https://api.groq.com/openai/v1"
+    xai_model: str = "grok-4.20-0309-non-reasoning"
+    xai_base_url: str = "https://api.x.ai/v1"
     max_tokens: int = 512
     translation_timeout_s: float = 5.0
     korean_register: str = "합니다체"

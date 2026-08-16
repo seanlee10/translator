@@ -2,11 +2,13 @@ from pathlib import Path
 
 from app.config import ENV_FILES, REPO_ROOT, Settings
 
-KEY_VARS = ("DEEPGRAM_API_KEY", "ANTHROPIC_API_KEY", "GROQ_API_KEY")
+KEY_VARS = ("DEEPGRAM_API_KEY", "ANTHROPIC_API_KEY", "GROQ_API_KEY", "XAI_API_KEY")
 
 
 def make(**overrides) -> Settings:
-    base = dict(deepgram_api_key="d", anthropic_api_key="a", groq_api_key="g")
+    base = dict(
+        deepgram_api_key="d", anthropic_api_key="a", groq_api_key="g", xai_api_key="x"
+    )
     base.update(overrides)
     # _env_file=None keeps the suite hermetic: Settings now resolves a real
     # repo-root .env, and a developer's local one must not change defaults.
@@ -18,6 +20,8 @@ def test_defaults_match_the_design():
 
     assert s.anthropic_model == "claude-haiku-4-5"
     assert s.groq_model == "qwen/qwen3.6-27b"
+    assert s.xai_model == "grok-4.20-0309-non-reasoning"
+    assert s.xai_base_url == "https://api.x.ai/v1"
     assert s.default_provider == "anthropic"
     assert s.deepgram_model == "nova-3"
     assert s.translate_interims is True
@@ -74,6 +78,7 @@ def test_settings_load_their_values_from_an_env_file(tmp_path, monkeypatch):
         "DEEPGRAM_API_KEY=dg-from-file\n"
         "ANTHROPIC_API_KEY=an-from-file\n"
         "GROQ_API_KEY=gq-from-file\n"
+        "XAI_API_KEY=xa-from-file\n"
         "DEBOUNCE_MS=123\n",
         encoding="utf-8",
     )
@@ -83,6 +88,7 @@ def test_settings_load_their_values_from_an_env_file(tmp_path, monkeypatch):
     assert s.deepgram_api_key == "dg-from-file"
     assert s.anthropic_api_key == "an-from-file"
     assert s.groq_api_key == "gq-from-file"
+    assert s.xai_api_key == "xa-from-file"
     assert s.debounce_ms == 123
 
 
@@ -97,6 +103,7 @@ def test_a_backend_env_file_wins_over_the_repo_root_one(tmp_path, monkeypatch):
         "DEEPGRAM_API_KEY=dg-root\n"
         "ANTHROPIC_API_KEY=an-root\n"
         "GROQ_API_KEY=gq-root\n"
+        "XAI_API_KEY=xa-root\n"
         "DEBOUNCE_MS=111\n",
         encoding="utf-8",
     )
@@ -119,6 +126,7 @@ def test_a_missing_env_file_is_not_an_error_when_the_environment_supplies_keys(
     monkeypatch.setenv("DEEPGRAM_API_KEY", "dg-env")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "an-env")
     monkeypatch.setenv("GROQ_API_KEY", "gq-env")
+    monkeypatch.setenv("XAI_API_KEY", "xa-env")
 
     s = Settings(_env_file=(tmp_path / ".env", tmp_path / "backend" / ".env"))
 

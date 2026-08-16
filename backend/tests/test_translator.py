@@ -11,7 +11,9 @@ from app.translator import (
 
 
 def make_settings(**overrides) -> Settings:
-    base = dict(deepgram_api_key="d", anthropic_api_key="a", groq_api_key="g")
+    base = dict(
+        deepgram_api_key="d", anthropic_api_key="a", groq_api_key="g", xai_api_key="x"
+    )
     base.update(overrides)
     # _env_file=None keeps the suite hermetic: Settings now resolves a real
     # repo-root .env, and a developer's local one must not change defaults.
@@ -113,11 +115,12 @@ async def test_switching_provider_routes_subsequent_calls():
     assert len(groq.seen) == 1 and not anthropic.seen
 
 
-async def test_both_providers_receive_byte_identical_prompts():
+async def test_all_three_providers_receive_byte_identical_prompts():
     anthropic = FakeProvider("anthropic")
     groq = FakeProvider("groq")
+    xai = FakeProvider("xai")
     router = TranslatorRouter(
-        {"anthropic": anthropic, "groq": groq},
+        {"anthropic": anthropic, "groq": groq, "xai": xai},
         default="anthropic",
         settings=make_settings(),
     )
@@ -126,9 +129,12 @@ async def test_both_providers_receive_byte_identical_prompts():
     await router.translate("hello", context)
     router.set_provider("groq")
     await router.translate("hello", context)
+    router.set_provider("xai")
+    await router.translate("hello", context)
 
-    # Any quality difference must be the model, not the scaffolding.
-    assert anthropic.seen[0] == groq.seen[0]
+    # Any quality difference must be the model, not the scaffolding. A third
+    # provider must not weaken this: all three must match, not just a pair.
+    assert anthropic.seen[0] == groq.seen[0] == xai.seen[0]
 
 
 def test_unknown_provider_is_rejected():

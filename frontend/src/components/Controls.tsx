@@ -65,7 +65,11 @@ export function Controls(props: Props) {
         <div className="section-label">
           <span>Translation model</span>
           <span className="section-value">
-            {props.provider === "anthropic" ? "Haiku 4.5" : "Qwen 3.6"}
+            {props.provider === "anthropic"
+              ? "Haiku 4.5"
+              : props.provider === "groq"
+                ? "Qwen 3.6"
+                : "Grok 4.20"}
           </span>
         </div>
         <div className="model-toggle" role="group" aria-label="Translation model">
@@ -82,6 +86,13 @@ export function Controls(props: Props) {
           >
             <span className="model-orb groq-orb">Q</span>
             <span><strong>Qwen</strong><small>Groq preview</small></span>
+          </button>
+          <button
+            className={props.provider === "xai" ? "selected" : ""}
+            onClick={() => props.onProvider("xai")}
+          >
+            <span className="model-orb xai-orb">G</span>
+            <span><strong>Grok</strong><small>xAI 4.20</small></span>
           </button>
         </div>
       </section>

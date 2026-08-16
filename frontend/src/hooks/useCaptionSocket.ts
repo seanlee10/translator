@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 
-export type Provider = "anthropic" | "groq";
+export type Provider = "anthropic" | "groq" | "xai";
 export type PhraseStatus = "interim" | "provisional" | "final";
 
 export interface Phrase {

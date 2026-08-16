@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Live caption translator: microphone → Deepgram streaming STT → Claude Haiku 4.5 or Qwen3.6-27B (switchable mid-session) → side-by-side English/Korean captions. See `README.md` for setup and the `backend/.env` tuning table.
+Live caption translator: microphone → Deepgram streaming STT → Claude Haiku 4.5, Qwen3.6-27B, or Grok 4.20 non-reasoning (switchable mid-session) → side-by-side English/Korean captions. See `README.md` for setup and the `backend/.env` tuning table.
 
 ## Commands
 
@@ -10,7 +10,7 @@ Live caption translator: microphone → Deepgram streaming STT → Claude Haiku 
 # Backend (from backend/)
 pip install -e ".[dev]"
 uvicorn app.main:app --reload          # :8000
-python -m pytest -v                     # 90 tests
+python -m pytest -v                     # 93 tests
 python -m pytest tests/test_pipeline.py::test_a_late_interim_never_overwrites_a_finalized_phrase -v
 
 # Frontend (from frontend/)
@@ -67,12 +67,13 @@ Four invariants, each protecting something specific:
 
 ### Translation: shared prompt, thin providers
 
-`translator.py` owns the prompt, the output cleaning, and the latency timing. A provider module owns **only its SDK call**. This is not stylistic: the app exists to compare two models, and a test asserts both receive byte-identical prompts. Never move prompt construction into a provider.
+`translator.py` owns the prompt, the output cleaning, and the latency timing. A provider module owns **only its SDK call**. This is not stylistic: the app exists to compare models, and a test asserts all three receive byte-identical prompts. Never move prompt construction into a provider.
 
-Two API constraints that will produce confusing failures if "cleaned up":
+Three API constraints that will produce confusing failures if "cleaned up":
 
 - **Anthropic**: `claude-haiku-4-5` rejects `effort`, `thinking`, and `output_config` — plain `messages.create` with `model`/`max_tokens`/`system`/`messages` only.
 - **Groq**: `qwen/qwen3.6-27b` is a reasoning model. `reasoning_effort="none"` and `reasoning_format="hidden"` are **mandatory**, not tunable — without them every caption pays a hidden reasoning pass and the latency budget is gone. `clean_output` also strips `<think>` blocks as a second line of defense.
+- **xAI**: `grok-4.20-0309-non-reasoning` is the non-reasoning variant built for speed-critical requests. Unlike Groq/Qwen, there is no reasoning pass to disable — `reasoning_effort`/`reasoning_format` must never be sent to it. It is OpenAI-compatible (`https://api.x.ai/v1`, `/chat/completions`) and uses the `openai` package's `AsyncOpenAI` client rather than the `groq` SDK with a swapped base URL, so the two services can diverge without silently breaking each other.
 
 ### Deepgram adapter
 

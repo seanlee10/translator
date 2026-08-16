@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-ProviderName = Literal["anthropic", "groq"]
+ProviderName = Literal["anthropic", "groq", "xai"]
 
 # ---- Internal domain types (never cross the wire directly) ----
 

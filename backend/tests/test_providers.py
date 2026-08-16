@@ -1,10 +1,13 @@
 from app.config import Settings
 from app.providers.anthropic_provider import AnthropicProvider
 from app.providers.groq_provider import GroqProvider
+from app.providers.xai_provider import XAIProvider
 
 
 def make_settings(**overrides) -> Settings:
-    base = dict(deepgram_api_key="d", anthropic_api_key="a", groq_api_key="g")
+    base = dict(
+        deepgram_api_key="d", anthropic_api_key="a", groq_api_key="g", xai_api_key="x"
+    )
     base.update(overrides)
     # _env_file=None keeps the suite hermetic: Settings now resolves a real
     # repo-root .env, and a developer's local one must not change defaults.
@@ -127,3 +130,54 @@ async def test_groq_handles_a_null_content_response():
     client = FakeGroqClient(reply=None)
 
     assert await GroqProvider(client, make_settings()).complete("s", "p") == ""
+
+
+# ---- xAI ----
+#
+# Reuses the same OpenAI-style fakes as Groq (both are OpenAI-compatible
+# chat.completions clients).
+
+
+class FakeXAIClient:
+    def __init__(self, reply="반갑습니다"):
+        self.reply = reply
+        self.kwargs = None
+        self.chat = self
+        self.completions = self
+
+    async def create(self, **kwargs):
+        self.kwargs = kwargs
+        return FakeGroqCompletion(self.reply)
+
+
+async def test_xai_sends_the_model_and_no_reasoning_parameters():
+    client = FakeXAIClient()
+    provider = XAIProvider(client, make_settings())
+
+    result = await provider.complete("SYSTEM", "PROMPT")
+
+    assert result == "반갑습니다"
+    assert provider.name == "xai"
+    assert client.kwargs["model"] == "grok-4.20-0309-non-reasoning"
+    assert client.kwargs["max_tokens"] == 512
+    # Unlike Groq/Qwen, this is the non-reasoning variant — there is no
+    # reasoning pass to disable, so these must never be sent.
+    assert "reasoning_effort" not in client.kwargs
+    assert "reasoning_format" not in client.kwargs
+
+
+async def test_xai_sends_the_system_prompt_as_an_openai_style_message():
+    client = FakeXAIClient()
+
+    await XAIProvider(client, make_settings()).complete("SYSTEM", "PROMPT")
+
+    assert client.kwargs["messages"] == [
+        {"role": "system", "content": "SYSTEM"},
+        {"role": "user", "content": "PROMPT"},
+    ]
+
+
+async def test_xai_handles_a_null_content_response():
+    client = FakeXAIClient(reply=None)
+
+    assert await XAIProvider(client, make_settings()).complete("s", "p") == ""

@@ -1,15 +1,17 @@
 # Live Caption Translator
 
 Speak English into your microphone; see English and Korean captions side by side
-in real time. Deepgram transcribes; Claude Haiku 4.5 or Qwen3.6-27B translates —
-switchable mid-session so you can compare them on the same speech.
+in real time. Deepgram transcribes; Claude Haiku 4.5, Qwen3.6-27B, or Grok 4.20
+(non-reasoning) translates — switchable mid-session so you can compare them on
+the same speech.
 
 ## Setup
 
 ```bash
 cd backend
 cp .env.example .env
-# Edit backend/.env and add DEEPGRAM_API_KEY, ANTHROPIC_API_KEY, and GROQ_API_KEY.
+# Edit backend/.env and add DEEPGRAM_API_KEY, ANTHROPIC_API_KEY, GROQ_API_KEY,
+# and XAI_API_KEY.
 # .env is git-ignored at any depth — never commit it.
 pip install -e ".[dev]"
 cd ../frontend && npm install && cd ..
@@ -72,7 +74,7 @@ the desktop app normally when the presentation ends.
 cd backend && python -m pytest -v
 ```
 
-90 tests, all passing, with no network access and no API keys set — the suite
+93 tests, all passing, with no network access and no API keys set — the suite
 builds `Settings` directly with placeholder key strings in-process, with the
 env-file lookup disabled (`_env_file=None`), rather than reading `.env` or
 hitting any provider. A global 30s per-test timeout (`pytest-timeout`,
@@ -91,16 +93,21 @@ so plain `tsc --noEmit` type-checks zero files and exits `0` even when the
 code has type errors. `--build` follows the references and actually compiles
 `tsconfig.app.json` and `tsconfig.node.json`.
 
-## Comparing the two models
+## Comparing the three models
 
 Switch the **Model** dropdown mid-session. Each transcript row shows which model
-produced its Korean and how long the call took, and **Export** includes both, so
-you can compare quality and latency on identical speech.
+produced its Korean and how long the call took, and **Export** includes all three,
+so you can compare quality and latency on identical speech.
 
 Note that Qwen3.6-27B is on Groq's **preview** tier and may be withdrawn at short
 notice. Provider failures are isolated per phrase and never end the session —
-if Qwen starts failing, switch back to Claude from the **Model** dropdown at
+if one model starts failing, switch to another from the **Model** dropdown at
 any time.
+
+Grok 4.20 is the **non-reasoning** variant (`grok-4.20-0309-non-reasoning`),
+served through xAI's OpenAI-compatible endpoint. Unlike Qwen on Groq, there is
+no reasoning pass to disable for this model — it never receives Groq-specific
+parameters like `reasoning_effort`.
 
 ## Tuning
 
@@ -110,9 +117,11 @@ touching code.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `DEFAULT_PROVIDER` | `anthropic` | Which model (`anthropic` or `groq`) a new session starts with |
+| `DEFAULT_PROVIDER` | `anthropic` | Which model (`anthropic`, `groq`, or `xai`) a new session starts with |
 | `ANTHROPIC_MODEL` | `claude-haiku-4-5` | Claude model used for translation |
 | `GROQ_MODEL` | `qwen/qwen3.6-27b` | Groq model used for translation |
+| `XAI_MODEL` | `grok-4.20-0309-non-reasoning` | xAI Grok model used for translation |
+| `XAI_BASE_URL` | `https://api.x.ai/v1` | xAI's OpenAI-compatible API base URL |
 | `DEEPGRAM_MODEL` | `nova-3` | Deepgram transcription model |
 | `TRANSLATE_INTERIMS` | `true` | `false` translates only completed phrases — Korean lags more, costs less |
 | `DEBOUNCE_MS` | `400` | Minimum gap between translations of the same in-progress phrase |
@@ -160,5 +169,5 @@ or costly, raise it or use finals-only.
 - **`is_final` only.** Phrase boundaries rely on Deepgram's `is_final` flag,
   not `speech_final` / `UtteranceEnd`. If phrases run short in practice, tune
   `UTTERANCE_END_MS` before changing code.
-- **Shared prompt across providers.** Claude and Groq receive a
+- **Shared prompt across providers.** Claude, Groq, and xAI receive a
   byte-identical translation prompt by design, to keep the comparison fair.
