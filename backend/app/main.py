@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 
@@ -59,13 +60,16 @@ def health() -> dict[str, str]:
 
 @app.websocket("/ws/session")
 async def session(ws: WebSocket) -> None:
-    await ws.accept()
-    settings = _settings()
+    # A single lock serializes every write to this socket. The pipeline's own
+    # lock only orders CaptionOut emits against each other; TranscriptOut,
+    # StatusOut, and ErrorOut all bypass it, so without this lock up to three
+    # tasks (this handler, the pump, the pipeline's final worker) could call
+    # ws.send_json concurrently.
+    send_lock = asyncio.Lock()
 
     async def emit(event: BaseModel) -> None:
-        await ws.send_json(event.model_dump())
-
-    await emit(StatusOut(state="connected"))
+        async with send_lock:
+            await ws.send_json(event.model_dump())
 
     source = None
     router = None
@@ -73,6 +77,13 @@ async def session(ws: WebSocket) -> None:
     pump: asyncio.Task | None = None
 
     try:
+        # accept() and the first emit are inside the try so a client that
+        # vanishes immediately after connecting takes the same clean
+        # WebSocketDisconnect path as every other disconnect.
+        await ws.accept()
+        settings = _settings()
+        await emit(StatusOut(state="connected"))
+
         while True:
             message = await ws.receive()
 
@@ -81,13 +92,23 @@ async def session(ws: WebSocket) -> None:
 
             text = message.get("text")
             if text is not None:
-                control = json.loads(text)
-                kind = control.get("type")
+                try:
+                    control = json.loads(text)
+                    kind = control.get("type")
+                except Exception as exc:  # noqa: BLE001 - a bad frame is never fatal
+                    await emit(ErrorOut(message=f"malformed control message: {exc}"))
+                    continue
 
                 if kind == "start":
                     if source is not None:
+                        continue  # a second 'start' is a no-op, not an error
+                    try:
+                        sample_rate = int(
+                            control.get("sample_rate", settings.sample_rate)
+                        )
+                    except (TypeError, ValueError) as exc:
+                        await emit(ErrorOut(message=f"invalid sample_rate: {exc}"))
                         continue
-                    sample_rate = int(control.get("sample_rate", settings.sample_rate))
                     source = app.state.source_factory(settings, sample_rate)
                     await source.connect()
 
@@ -100,11 +121,16 @@ async def session(ws: WebSocket) -> None:
                     await emit(StatusOut(state="listening"))
 
                 elif kind == "config":
-                    if pipeline is not None and "translate_interims" in control:
+                    if source is None:
+                        await emit(
+                            ErrorOut(message="cannot configure before 'start'")
+                        )
+                        continue
+                    if "translate_interims" in control:
                         pipeline.set_translate_interims(
                             bool(control["translate_interims"])
                         )
-                    if router is not None and "provider" in control:
+                    if "provider" in control:
                         try:
                             router.set_provider(control["provider"])
                         except ValueError as exc:
@@ -127,12 +153,23 @@ async def session(ws: WebSocket) -> None:
         except Exception:  # noqa: BLE001 - socket may already be gone
             pass
     finally:
+        # Each step gets its own try/except: a failure in one must not skip
+        # the others, and the pump is awaited (not just cancelled) so it
+        # cannot still be mid-handle() while the pipeline it feeds is closed.
         if pump is not None:
             pump.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pump
         if pipeline is not None:
-            await pipeline.aclose()
+            try:
+                await pipeline.aclose()
+            except Exception:  # noqa: BLE001 - source cleanup must still run
+                logger.exception("pipeline close failed")
         if source is not None:
-            await source.aclose()
+            try:
+                await source.aclose()
+            except Exception:  # noqa: BLE001 - best-effort cleanup
+                logger.exception("source close failed")
 
 
 async def _pump(source, pipeline: Pipeline, emit) -> None:
@@ -140,8 +177,9 @@ async def _pump(source, pipeline: Pipeline, emit) -> None:
     try:
         async for event in source.events():
             await pipeline.handle(event)
-    except asyncio.CancelledError:
-        raise
     except Exception as exc:  # noqa: BLE001 - a dead source must not kill the socket
         logger.exception("transcript source failed")
-        await emit(ErrorOut(message=f"transcription failed: {exc}", fatal=True))
+        try:
+            await emit(ErrorOut(message=f"transcription failed: {exc}", fatal=True))
+        except Exception:  # noqa: BLE001 - socket may already be gone
+            pass
