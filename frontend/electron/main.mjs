@@ -85,17 +85,21 @@ app.whenReady().then(() => {
       event.sender.send("overlay:snapshot", latestOverlaySnapshot);
     }
   });
-  ipcMain.handle("overlay:open", () => {
+  ipcMain.handle("overlay:open", (event) => {
+    if (!isWindowSender(event.sender, controlWindow)) return false;
     createOverlayWindow();
     return true;
   });
-  ipcMain.handle("overlay:close", () => {
+  ipcMain.handle("overlay:close", (event) => {
+    if (!isWindowSender(event.sender, controlWindow)) return false;
     overlayWindow?.close();
     return true;
   });
   ipcMain.handle(
     "overlay:is-open",
-    () => Boolean(overlayWindow && !overlayWindow.isDestroyed()),
+    (event) =>
+      isWindowSender(event.sender, controlWindow) &&
+      Boolean(overlayWindow && !overlayWindow.isDestroyed()),
   );
 
   createControlWindow();

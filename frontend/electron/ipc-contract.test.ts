@@ -17,6 +17,15 @@ describe("Electron overlay snapshot handshake", () => {
     expect(main).toContain('ipcMain.on("overlay:request-snapshot"');
     expect(main).toContain("isWindowSender(event.sender, overlayWindow)");
     expect(main).toContain("isWindowSender(event.sender, controlWindow)");
+    expect(main).toMatch(
+      /ipcMain\.handle\("overlay:open", \(event\) => \{\s+if \(!isWindowSender\(event\.sender, controlWindow\)\) return false;/,
+    );
+    expect(main).toMatch(
+      /ipcMain\.handle\("overlay:close", \(event\) => \{\s+if \(!isWindowSender\(event\.sender, controlWindow\)\) return false;/,
+    );
+    expect(main).toMatch(
+      /"overlay:is-open",\s+\(event\) =>\s+isWindowSender\(event\.sender, controlWindow\)/,
+    );
     expect(main).not.toContain('webContents.once("did-finish-load"');
 
     const listenerIndex = overlay.indexOf("onOverlaySnapshot");
