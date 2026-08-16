@@ -8,3 +8,6 @@ dist/
 
 # Global gitignore excludes "docs"; specs live there and must be tracked.
 !docs/
+
+# Global gitignore excludes CLAUDE.md; this repo tracks it.
+!CLAUDE.md
