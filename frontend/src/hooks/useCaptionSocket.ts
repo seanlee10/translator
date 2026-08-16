@@ -49,6 +49,13 @@ export function useCaptionSocket(url: string) {
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  // Messages that must go out before any audio (start, initial config) but
+  // were requested while the handshake was still in flight. Queued here and
+  // flushed, in order, from onopen — this closes the startup race where
+  // sendStart()/sendConfig() would otherwise throw InvalidStateError (or,
+  // if silently guarded without queueing, be dropped) when the WebSocket
+  // hasn't finished connecting yet.
+  const pendingRef = useRef<(() => void)[]>([]);
 
   const upsert = useCallback((next: Phrase) => {
     setPhrases((current) => {
@@ -92,10 +99,17 @@ export function useCaptionSocket(url: string) {
     }
 
     setError(null);
+    pendingRef.current = [];
 
     const ws = new WebSocket(url);
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
+
+    ws.onopen = () => {
+      const queued = pendingRef.current;
+      pendingRef.current = [];
+      for (const send of queued) send();
+    };
 
     ws.onmessage = (event) => {
       const message: ServerEvent = JSON.parse(event.data as string);
@@ -134,9 +148,13 @@ export function useCaptionSocket(url: string) {
   }, [url, upsert]);
 
   const sendStart = useCallback((sampleRate: number) => {
-    wsRef.current?.send(
-      JSON.stringify({ type: "start", sample_rate: sampleRate }),
-    );
+    const send = () =>
+      wsRef.current?.send(
+        JSON.stringify({ type: "start", sample_rate: sampleRate }),
+      );
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) send();
+    else pendingRef.current.push(send);
   }, []);
 
   const sendAudio = useCallback((pcm: ArrayBuffer) => {
@@ -151,7 +169,10 @@ export function useCaptionSocket(url: string) {
         payload.translate_interims = config.translateInterims;
       }
       if (config.provider !== undefined) payload.provider = config.provider;
-      wsRef.current?.send(JSON.stringify(payload));
+      const send = () => wsRef.current?.send(JSON.stringify(payload));
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) send();
+      else pendingRef.current.push(send);
     },
     [],
   );
@@ -165,12 +186,14 @@ export function useCaptionSocket(url: string) {
       // Detach listeners first: closing is async, and a user-initiated
       // disconnect must not surface as a connection error via a stray
       // onerror/onclose firing after we've already moved on.
+      ws.onopen = null;
       ws.onmessage = null;
       ws.onerror = null;
       ws.onclose = null;
       ws.close();
     }
     wsRef.current = null;
+    pendingRef.current = [];
     setStatus("closed");
   }, []);
 

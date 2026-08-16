@@ -1,122 +1,75 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useCallback, useState } from "react";
+import "./App.css";
+import { Controls } from "./components/Controls";
+import { TranscriptView } from "./components/TranscriptView";
+import { useAudioCapture } from "./hooks/useAudioCapture";
+import { useCaptionSocket, type Provider } from "./hooks/useCaptionSocket";
 
-function App() {
-  const [count, setCount] = useState(0)
+const WS_URL = "ws://localhost:8000/ws/session";
+
+export default function App() {
+  const [fontSize, setFontSize] = useState(22);
+  const [finalsOnly, setFinalsOnly] = useState(false);
+  const [provider, setProvider] = useState<Provider>("anthropic");
+
+  const socket = useCaptionSocket(WS_URL);
+  const audio = useAudioCapture();
+
+  const toggle = useCallback(async () => {
+    if (audio.active) {
+      audio.stop();
+      socket.disconnect();
+      return;
+    }
+
+    socket.connect();
+    let started = false;
+    await audio.start((pcm, sampleRate) => {
+      if (!started) {
+        socket.sendStart(sampleRate);
+        // Apply current UI selections to the fresh session.
+        socket.sendConfig({ translateInterims: !finalsOnly, provider });
+        started = true;
+      }
+      socket.sendAudio(pcm);
+    });
+  }, [audio, socket, finalsOnly, provider]);
+
+  const changeFinalsOnly = (value: boolean) => {
+    setFinalsOnly(value);
+    socket.sendConfig({ translateInterims: !value });
+  };
+
+  const changeProvider = (value: Provider) => {
+    setProvider(value);
+    socket.sendConfig({ provider: value });
+  };
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div className="app">
+      <h1>Live Caption Translator — English → 한국어</h1>
 
-      <div className="ticks"></div>
+      <Controls
+        active={audio.active}
+        status={socket.status}
+        devices={audio.devices}
+        deviceId={audio.deviceId}
+        onDeviceChange={audio.setDeviceId}
+        onToggle={toggle}
+        fontSize={fontSize}
+        onFontSize={setFontSize}
+        finalsOnly={finalsOnly}
+        onFinalsOnly={changeFinalsOnly}
+        provider={provider}
+        onProvider={changeProvider}
+        phrases={socket.phrases}
+      />
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+      {(audio.error || socket.error) && (
+        <p className="error">{audio.error ?? socket.error}</p>
+      )}
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+      <TranscriptView phrases={socket.phrases} fontSize={fontSize} />
+    </div>
+  );
 }
-
-export default App
