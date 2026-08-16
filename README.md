@@ -7,13 +7,18 @@ switchable mid-session so you can compare them on the same speech.
 ## Setup
 
 ```bash
+cd backend
 cp .env.example .env
-# Edit .env and add DEEPGRAM_API_KEY, ANTHROPIC_API_KEY, and GROQ_API_KEY.
-# .env is git-ignored — never commit it.
-
-cd backend && pip install -e ".[dev]" && cd ..
-cd frontend && npm install && cd ..
+# Edit backend/.env and add DEEPGRAM_API_KEY, ANTHROPIC_API_KEY, and GROQ_API_KEY.
+# .env is git-ignored at any depth — never commit it.
+pip install -e ".[dev]"
+cd ../frontend && npm install && cd ..
 ```
+
+`.env` belongs in `backend/` — the backend is the only thing that reads it,
+and it is also the directory you run the server from. A repo-root `.env` is
+accepted too (if one exists, `backend/.env` overrides it), so an older layout
+keeps working; `backend/` is the recommended location.
 
 ## Run
 
@@ -38,11 +43,12 @@ frontend from any other origin or port will be rejected.
 cd backend && python -m pytest -v
 ```
 
-73 tests, all passing, with no network access and no API keys set — the suite
-builds `Settings` directly with placeholder key strings in-process rather than
-reading `.env` or hitting any provider. A global 30s per-test timeout
-(`pytest-timeout`, configured in `backend/pyproject.toml`) guards against a
-hang in async code silently blocking the suite.
+90 tests, all passing, with no network access and no API keys set — the suite
+builds `Settings` directly with placeholder key strings in-process, with the
+env-file lookup disabled (`_env_file=None`), rather than reading `.env` or
+hitting any provider. A global 30s per-test timeout (`pytest-timeout`,
+configured in `backend/pyproject.toml`) guards against a hang in async code
+silently blocking the suite.
 
 ### Frontend type-check
 
@@ -69,8 +75,9 @@ any time.
 
 ## Tuning
 
-All knobs live in `.env` (see `.env.example`); every variable below has a
-default in `backend/app/config.py` and can be overridden without touching code.
+All knobs live in `backend/.env` (see `backend/.env.example`); every variable
+below has a default in `backend/app/config.py` and can be overridden without
+touching code.
 
 | Variable | Default | Effect |
 |---|---|---|
@@ -92,7 +99,7 @@ session, so you can feel the latency difference without a restart.
 
 Automated tests cover backend logic only. Before relying on the app, verify
 the full pipeline by hand with both servers running and real API keys in
-`.env`:
+`backend/.env`:
 
 1. `http://localhost:8000/health` returns `{"status":"ok"}`.
 2. The page loads showing status `idle`.
@@ -112,6 +119,12 @@ or costly, raise it or use finals-only.
 
 - **No Deepgram reconnect.** A dropped Deepgram connection ends the session
   with a fatal error rather than retrying.
+- **The finals queue is unbounded and sheds nothing.** Completed phrases are
+  translated one at a time through a single queue to keep context in order.
+  If a provider is persistently slower than speech, that queue grows and
+  captions fall progressively further behind rather than degrading cleanly —
+  there is no drop policy. Switch models or enable **Finals only** if you see
+  it. (Interim translations are self-limiting and do not queue.)
 - **No hosting, authentication, or rate limiting.** This is a local
   single-user dev tool.
 - **English source, Korean target only.**
