@@ -90,8 +90,8 @@ def clean_output(raw: str) -> str:
 class TranslatorRouter:
     """Owns the shared prompt and dispatches to the selected provider.
 
-    Both providers must receive byte-identical prompts, otherwise comparing
-    them measures the scaffolding rather than the models.
+    All three providers must receive byte-identical prompts, otherwise
+    comparing them measures the scaffolding rather than the models.
     """
 
     def __init__(

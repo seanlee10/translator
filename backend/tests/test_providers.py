@@ -159,7 +159,10 @@ async def test_xai_sends_the_model_and_no_reasoning_parameters():
     assert result == "반갑습니다"
     assert provider.name == "xai"
     assert client.kwargs["model"] == "grok-4.20-0309-non-reasoning"
-    assert client.kwargs["max_tokens"] == 512
+    # max_tokens is deprecated by xAI in favor of max_completion_tokens;
+    # a new integration must use the non-deprecated parameter.
+    assert client.kwargs["max_completion_tokens"] == 512
+    assert "max_tokens" not in client.kwargs
     # Unlike Groq/Qwen, this is the non-reasoning variant — there is no
     # reasoning pass to disable, so these must never be sent.
     assert "reasoning_effort" not in client.kwargs

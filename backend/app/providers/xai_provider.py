@@ -19,7 +19,7 @@ class XAIProvider:
     async def complete(self, system: str, prompt: str) -> str:
         completion = await self._client.chat.completions.create(
             model=self._s.xai_model,
-            max_tokens=self._s.max_tokens,
+            max_completion_tokens=self._s.max_tokens,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
