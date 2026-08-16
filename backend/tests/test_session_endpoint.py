@@ -1,5 +1,8 @@
 import asyncio
+import time
 
+import pytest
+from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from app.config import Settings
@@ -14,27 +17,48 @@ def make_settings(**overrides) -> Settings:
 
 
 class FakeSource:
-    """Replays a scripted transcript instead of talking to Deepgram."""
+    """Replays a scripted transcript instead of talking to Deepgram.
+
+    Every event still requires at least one audio chunk to have arrived
+    (matching a live connection: nothing comes back before audio goes in).
+    A script index may additionally require more than one chunk via
+    `gate_after`, e.g. `{1: 2}` means script[1] won't be yielded until the
+    *second* `send_audio` call. This lets a test force real event-loop turns
+    to happen between two scripted events — e.g. enough for an in-flight
+    interim-translation task to actually run to completion — instead of an
+    entire scripted phrase flowing through in one uninterrupted burst.
+    """
 
     script: list[TranscriptEvent] = []
+    gate_after: dict[int, int] = {}
     last_sample_rate: int | None = None
     fail_after: Exception | None = None
 
     def __init__(self, settings, sample_rate):
         FakeSource.last_sample_rate = sample_rate
         self.audio_chunks: list[bytes] = []
-        self._released = asyncio.Event()
+        self._chunk_count = 0
+        self._chunk_event = asyncio.Event()
 
     async def connect(self):
         return None
 
     async def send_audio(self, chunk):
         self.audio_chunks.append(chunk)
-        self._released.set()
+        self._chunk_count += 1
+        self._chunk_event.set()
+
+    async def _wait_for_chunks(self, n: int) -> None:
+        while self._chunk_count < n:
+            await self._chunk_event.wait()
+            self._chunk_event.clear()
 
     async def events(self):
-        await self._released.wait()  # wait until audio actually arrives
-        for event in FakeSource.script:
+        await self._wait_for_chunks(1)  # wait until audio actually arrives
+        for index, event in enumerate(FakeSource.script):
+            required = FakeSource.gate_after.get(index, 1)
+            if required > 1:
+                await self._wait_for_chunks(required)
             yield event
         if FakeSource.fail_after is not None:
             raise FakeSource.fail_after
@@ -70,6 +94,7 @@ def build_client(**settings_overrides):
     # to pass because the asserted values differ from test to test.
     FakeSource.last_sample_rate = None
     FakeSource.script = []
+    FakeSource.gate_after = {}
     FakeSource.fail_after = None
     FakeRouter.last = None
 
@@ -172,17 +197,34 @@ def test_an_unknown_provider_reports_an_error_without_killing_the_session():
 def test_the_translate_interims_toggle_actually_changes_behavior():
     # Built with interims ENABLED and debounce disabled: if the config
     # message below did not actually reach `set_translate_interims`, the
-    # interim event would translate immediately and a *provisional* caption
-    # for "hel" would arrive before the final caption for "hello". By
-    # asserting the message right after the transcript is the FINAL caption
-    # (not a provisional one), a no-op toggle handler would be caught: the
-    # second receive would return the provisional dict instead and fail the
-    # equality check.
+    # interim event spawns an interim-translation task immediately.
+    #
+    # The first version of this test yielded the interim and the final
+    # event from FakeSource back-to-back with no real suspension between
+    # them. That made it pass even with the toggle broken: the final event
+    # closed the phrase (`state.closed = True`) before the interim task's
+    # `asyncio.wait_for(...)` ever got a turn, so the pipeline's own
+    # sequence guard ("a late interim never overwrites a finalized phrase",
+    # covered separately in test_pipeline.py) silently swallowed the
+    # provisional — the same wire output the *fixed* toggle also produces.
+    # The test therefore couldn't tell "toggle works" from "toggle broken,
+    # guard saved us" apart.
+    #
+    # Fix: `gate_after={1: 2}` makes FakeSource withhold the final event
+    # until a *second* audio chunk arrives. Between the two chunks the test
+    # sleeps for real wall-clock time; because TestClient runs the ASGI app
+    # on a persistent background-thread event loop (not just during
+    # portal.call()), that sleep gives a broken-toggle's interim task every
+    # opportunity to run FakeRouter.translate() (no real I/O, near-instant)
+    # to completion and emit its provisional *before* the final is ever
+    # delivered to the pipeline. A working toggle never creates that task at
+    # all, so nothing arrives regardless of how long the test waits.
     client = build_client(translate_interims=True, debounce_ms=0)
     FakeSource.script = [
         TranscriptEvent(phrase_id=0, text="hel", is_final=False),
         TranscriptEvent(phrase_id=0, text="hello", is_final=True),
     ]
+    FakeSource.gate_after = {1: 2}
 
     with client.websocket_connect("/ws/session") as ws:
         ws.receive_json()  # connected
@@ -190,7 +232,7 @@ def test_the_translate_interims_toggle_actually_changes_behavior():
         ws.receive_json()  # listening
 
         ws.send_json({"type": "config", "translate_interims": False})
-        ws.send_bytes(b"\x00\x01" * 160)  # releases the source's events()
+        ws.send_bytes(b"\x00\x01" * 160)  # 1st chunk: releases the interim
 
         assert ws.receive_json() == {
             "type": "transcript",
@@ -198,6 +240,12 @@ def test_the_translate_interims_toggle_actually_changes_behavior():
             "en": "hel",
             "status": "interim",
         }
+
+        # Give a would-be interim-translation task every chance to run to
+        # completion before the final is ever released to the pipeline.
+        time.sleep(0.1)
+
+        ws.send_bytes(b"\x00\x01" * 160)  # 2nd chunk: releases the final
         caption = ws.receive_json()
 
     assert caption == {
@@ -209,6 +257,24 @@ def test_the_translate_interims_toggle_actually_changes_behavior():
         "provider": "anthropic",
         "latency_ms": 7,
     }
+
+
+def test_stop_closes_the_connection_cleanly():
+    client = build_client()
+    FakeSource.script = []
+
+    with client.websocket_connect("/ws/session") as ws:
+        ws.receive_json()  # connected
+        ws.send_json({"type": "start", "sample_rate": 16000})
+        ws.receive_json()  # listening
+
+        ws.send_json({"type": "stop"})
+
+        # The server must send an actual close frame, not just stop
+        # responding: the next receive should observe a clean disconnect,
+        # not hang.
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()
 
 
 def test_a_dead_transcription_source_reports_a_fatal_error_and_does_not_hang():

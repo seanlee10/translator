@@ -170,6 +170,14 @@ async def session(ws: WebSocket) -> None:
                 await source.aclose()
             except Exception:  # noqa: BLE001 - best-effort cleanup
                 logger.exception("source close failed")
+        try:
+            # Closes the socket on every normal exit path too (e.g. 'stop'),
+            # not just on error: returning from the handler without this
+            # never sends a close frame, so a client-initiated 'stop' would
+            # otherwise leave its connection open indefinitely.
+            await ws.close()
+        except Exception:  # noqa: BLE001 - socket may already be gone
+            pass
 
 
 async def _pump(source, pipeline: Pipeline, emit) -> None:
