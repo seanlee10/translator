@@ -70,7 +70,9 @@ PROVIDER_REGISTRY: tuple[ProviderSpec, ...] = (
 
 
 def _is_configured(spec: ProviderSpec, settings: Settings) -> bool:
-    return bool(getattr(settings, spec.key_attr))
+    # Strip before testing: a whitespace-only value (e.g. a stray space left
+    # in a .env file) is truthy under bare `bool()` but is not a usable key.
+    return bool(getattr(settings, spec.key_attr).strip())
 
 
 def configured_providers(settings: Settings) -> list[ProviderSpec]:

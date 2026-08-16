@@ -230,3 +230,16 @@ def test_configured_providers_filters_by_key_and_keeps_registry_order():
     specs = configured_providers(settings)
 
     assert [spec.id for spec in specs] == ["groq"]
+
+
+def test_a_whitespace_only_key_is_reported_as_not_configured():
+    # A copied .env.example with a stray blank value (or trailing
+    # whitespace) must not be treated as "configured" — bare truthiness on
+    # an unstripped string would report this as usable and the button would
+    # 401 the moment it's clicked.
+    settings = make_settings(anthropic_api_key="   ", groq_api_key="", xai_api_key="")
+
+    specs = configured_providers(settings)
+
+    assert specs == []
+    assert build_providers(settings) == {}
