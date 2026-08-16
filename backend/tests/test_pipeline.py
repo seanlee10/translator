@@ -3,7 +3,13 @@ import asyncio
 from pydantic import BaseModel
 
 from app.config import Settings
-from app.models import CaptionOut, ErrorOut, TranscriptEvent, TranslationResult
+from app.models import (
+    CaptionOut,
+    ErrorOut,
+    TranscriptEvent,
+    TranscriptOut,
+    TranslationResult,
+)
 from app.pipeline import Pipeline
 
 
@@ -217,3 +223,206 @@ async def test_a_failed_phrase_does_not_enter_the_context_window():
     )
 
     assert [(c.phrase_id, c.ko) for c in recorder.captions()] == [(1, "[ko]good")]
+
+
+class FakeClock:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self) -> float:
+        return self.t
+
+    def advance(self, ms: float) -> None:
+        self.t += ms / 1000.0
+
+
+async def run_with_clock(items, settings=None, translator=None):
+    """items: TranscriptEvent to handle, or int milliseconds to advance."""
+    settings = settings or make_settings()
+    translator = translator or FakeTranslator()
+    recorder = Recorder()
+    clock = FakeClock()
+    pipeline = Pipeline(
+        translate=translator, emit=recorder, settings=settings, now=clock
+    )
+    await pipeline.start()
+    for item in items:
+        if isinstance(item, int):
+            clock.advance(item)
+        else:
+            await pipeline.handle(item)
+            await pipeline.drain()
+    await pipeline.drain()
+    await pipeline.aclose()
+    return recorder, translator
+
+
+async def test_english_interims_publish_without_any_translation_call():
+    recorder, translator = await run_with_clock(
+        [TranscriptEvent(phrase_id=0, text="hel", is_final=False)],
+        settings=make_settings(translate_interims=False),
+    )
+
+    assert [e.en for e in recorder.events if isinstance(e, TranscriptOut)] == ["hel"]
+    assert translator.calls == []
+
+
+async def test_first_interim_is_not_translated_before_the_debounce_window():
+    _, translator = await run_with_clock(
+        [TranscriptEvent(phrase_id=0, text="hel", is_final=False)]
+    )
+
+    assert translator.calls == []
+
+
+async def test_interim_is_translated_once_the_debounce_window_elapses():
+    recorder, translator = await run_with_clock(
+        [
+            TranscriptEvent(phrase_id=0, text="hel", is_final=False),
+            500,
+            TranscriptEvent(phrase_id=0, text="hello th", is_final=False),
+        ]
+    )
+
+    assert translator.calls == [("hello th", [])]
+    assert recorder.captions() == [
+        CaptionOut(
+            phrase_id=0,
+            en="hello th",
+            ko="[ko]hello th",
+            status="provisional",
+            provider="anthropic",
+            latency_ms=100,
+        )
+    ]
+
+
+async def test_interims_inside_the_debounce_window_are_skipped():
+    _, translator = await run_with_clock(
+        [
+            TranscriptEvent(phrase_id=0, text="a", is_final=False),
+            500,
+            TranscriptEvent(phrase_id=0, text="a b", is_final=False),
+            100,  # too soon after the previous translation
+            TranscriptEvent(phrase_id=0, text="a b c", is_final=False),
+            500,
+            TranscriptEvent(phrase_id=0, text="a b c d", is_final=False),
+        ]
+    )
+
+    assert [text for text, _ in translator.calls] == ["a b", "a b c d"]
+
+
+async def test_an_in_flight_interim_suppresses_a_new_one_rather_than_queueing():
+    gate = asyncio.Event()
+    calls: list[str] = []
+
+    class Blocking:
+        async def __call__(self, text, context):
+            calls.append(text)
+            await gate.wait()
+            return TranslationResult(
+                ko=f"[ko]{text}", provider="anthropic", latency_ms=1
+            )
+
+    recorder = Recorder()
+    clock = FakeClock()
+    pipeline = Pipeline(
+        translate=Blocking(), emit=recorder, settings=make_settings(), now=clock
+    )
+    await pipeline.start()
+
+    await pipeline.handle(TranscriptEvent(phrase_id=0, text="a", is_final=False))
+    clock.advance(500)
+    await pipeline.handle(TranscriptEvent(phrase_id=0, text="a b", is_final=False))
+    await asyncio.sleep(0)  # let the interim task start and block
+    clock.advance(500)
+    await pipeline.handle(TranscriptEvent(phrase_id=0, text="a b c", is_final=False))
+    await asyncio.sleep(0)
+
+    assert calls == ["a b"]  # the second was skipped, not queued
+
+    gate.set()
+    await pipeline.drain()
+    await pipeline.aclose()
+
+
+async def test_a_late_interim_never_overwrites_a_finalized_phrase():
+    gate = asyncio.Event()
+
+    class SlowInterim:
+        async def __call__(self, text, context):
+            if not text.endswith("!"):
+                await gate.wait()
+            return TranslationResult(
+                ko=f"[ko]{text}", provider="anthropic", latency_ms=1
+            )
+
+    recorder = Recorder()
+    clock = FakeClock()
+    pipeline = Pipeline(
+        translate=SlowInterim(), emit=recorder, settings=make_settings(), now=clock
+    )
+    await pipeline.start()
+
+    await pipeline.handle(TranscriptEvent(phrase_id=0, text="hel", is_final=False))
+    clock.advance(500)
+    await pipeline.handle(TranscriptEvent(phrase_id=0, text="hello", is_final=False))
+    await asyncio.sleep(0)
+    await pipeline.handle(TranscriptEvent(phrase_id=0, text="hello!", is_final=True))
+    await pipeline.drain()
+
+    gate.set()  # the stale interim now returns
+    await pipeline.drain()
+    await pipeline.aclose()
+
+    assert [(c.status, c.ko) for c in recorder.captions()] == [("final", "[ko]hello!")]
+
+
+async def test_a_failing_interim_is_silent_and_never_retried():
+    class AlwaysFails:
+        def __init__(self):
+            self.n = 0
+
+        async def __call__(self, text, context):
+            self.n += 1
+            raise RuntimeError("boom")
+
+    failing = AlwaysFails()
+    recorder, _ = await run_with_clock(
+        [
+            TranscriptEvent(phrase_id=0, text="a", is_final=False),
+            500,
+            TranscriptEvent(phrase_id=0, text="a b", is_final=False),
+        ],
+        translator=failing,
+    )
+
+    assert failing.n == 1  # no retry
+    assert not [e for e in recorder.events if isinstance(e, ErrorOut)]
+
+
+async def test_set_translate_interims_takes_effect_immediately():
+    recorder = Recorder()
+    clock = FakeClock()
+    translator = FakeTranslator()
+    pipeline = Pipeline(
+        translate=translator, emit=recorder, settings=make_settings(), now=clock
+    )
+    await pipeline.start()
+
+    pipeline.set_translate_interims(False)
+    await pipeline.handle(TranscriptEvent(phrase_id=0, text="a", is_final=False))
+    clock.advance(500)
+    await pipeline.handle(TranscriptEvent(phrase_id=0, text="a b", is_final=False))
+    await pipeline.drain()
+
+    assert translator.calls == []
+
+    pipeline.set_translate_interims(True)
+    clock.advance(500)
+    await pipeline.handle(TranscriptEvent(phrase_id=0, text="a b c", is_final=False))
+    await pipeline.drain()
+    await pipeline.aclose()
+
+    assert [text for text, _ in translator.calls] == ["a b c"]
