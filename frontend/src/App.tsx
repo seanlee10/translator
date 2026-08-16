@@ -39,6 +39,29 @@ export default function App() {
     providerRef.current = provider;
   }, [provider]);
 
+  // A fatal server error ends the session: the backend has torn its side
+  // down, so the mic must stop and the socket must close too. Without this
+  // the button still read "Stop", the pill still read "listening", and the
+  // mic indicator stayed lit over a dead session. The error banner is left
+  // in place (neither audio.stop() nor socket.disconnect() clears it), and
+  // connect() resets `fatal` so the next Start runs clean.
+  //
+  // The ref makes this fire exactly once per fatal error: `socket` and
+  // `audio` are fresh objects on every render, so the effect body re-runs
+  // constantly and must be idempotent.
+  const fatalHandledRef = useRef(false);
+  useEffect(() => {
+    if (!socket.fatal) {
+      fatalHandledRef.current = false;
+      return;
+    }
+    if (fatalHandledRef.current) return;
+    fatalHandledRef.current = true;
+    audio.stop();
+    socket.disconnect();
+    sessionStartedRef.current = false;
+  }, [socket, audio]);
+
   const toggle = useCallback(async () => {
     if (audio.active) {
       audio.stop();

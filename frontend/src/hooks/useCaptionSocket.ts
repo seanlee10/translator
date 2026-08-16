@@ -48,6 +48,10 @@ export function useCaptionSocket(url: string) {
   const [phrases, setPhrases] = useState<Phrase[]>([]);
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
+  // Set when the server reports an error it cannot continue past. The
+  // session is over at that point, so App tears the capture down; without
+  // this the mic kept running and the UI still claimed to be listening.
+  const [fatal, setFatal] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   // Messages that must go out before any audio (start, initial config) but
   // were requested while the handshake was still in flight. Queued here and
@@ -99,6 +103,12 @@ export function useCaptionSocket(url: string) {
     }
 
     setError(null);
+    setFatal(false);
+    // Phrase IDs restart at 0 for every new backend session, so without
+    // this the next session's phrase 0 merges into the previous session's
+    // phrase 0 — new English shown beside unrelated stale Korean, in solid
+    // "final" styling, with the old session's provider and latency.
+    setPhrases([]);
     pendingRef.current = [];
 
     const ws = new WebSocket(url);
@@ -139,6 +149,7 @@ export function useCaptionSocket(url: string) {
           break;
         case "error":
           setError(message.message);
+          if (message.fatal) setFatal(true);
           break;
       }
     };
@@ -212,5 +223,6 @@ export function useCaptionSocket(url: string) {
     phrases,
     status,
     error,
+    fatal,
   };
 }
