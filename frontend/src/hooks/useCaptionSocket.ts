@@ -2,8 +2,8 @@ import { useCallback, useRef, useState } from "react";
 
 // The provider set is now discovered from the backend (GET /providers) and
 // changes with which API keys are configured server-side, so it's a plain
-// string here rather than a hardcoded union — see src/lib/providers.ts for
-// the types describing the fetched list itself.
+// string here rather than a hardcoded union — see src/providers.ts for the
+// types describing the fetched list itself.
 export type Provider = string;
 export type PhraseStatus = "interim" | "provisional" | "final";
 
