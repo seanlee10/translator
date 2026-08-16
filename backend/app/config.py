@@ -1,10 +1,11 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-ProviderName = Literal["anthropic", "groq", "xai"]
+from app.models import ProviderName
+
+__all__ = ["ProviderName", "Settings", "get_settings", "ENV_FILES", "REPO_ROOT"]
 
 # pydantic-settings resolves a bare "env_file" name against the *process CWD*.
 # README documents starting the server from backend/ with .env at the repo
