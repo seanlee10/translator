@@ -77,7 +77,7 @@ the desktop app normally when the presentation ends.
 cd backend && python -m pytest -v
 ```
 
-105 tests, all passing, with no network access and no API keys set — the suite
+106 tests, all passing, with no network access and no API keys set — the suite
 builds `Settings` directly with placeholder key strings in-process, with the
 env-file lookup disabled (`_env_file=None`), rather than reading `.env` or
 hitting any provider. A global 30s per-test timeout (`pytest-timeout`,
