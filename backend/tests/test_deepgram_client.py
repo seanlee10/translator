@@ -1,7 +1,16 @@
+import asyncio
 from dataclasses import dataclass
 
+import pytest
+
 from app.config import Settings
-from app.deepgram_client import PhraseTracker, connect_params, message_to_dict
+from app.deepgram_client import (
+    DeepgramSource,
+    DeepgramStreamError,
+    PhraseTracker,
+    connect_params,
+    message_to_dict,
+)
 
 
 def make_settings(**overrides) -> Settings:
@@ -98,3 +107,98 @@ def test_message_to_dict_accepts_pydantic_dataclass_and_plain_dict():
     assert message_to_dict(Legacy())["is_final"] is False
     assert message_to_dict(Plain())["type"] == "Results"
     assert message_to_dict({"type": "Results"})["type"] == "Results"
+
+
+# ---- DeepgramSource: the callback -> queue -> async-iterator bridge ----
+#
+# _on_message, _on_error, _on_close, and events() never touch self._connection
+# or self._client, so the adapter can be driven directly, with no network and
+# no real SDK client, by constructing DeepgramSource and calling its handlers
+# by hand.
+
+
+async def test_a_message_pushed_through_on_message_surfaces_from_events():
+    source = DeepgramSource(make_settings(), 16000)
+
+    await source._on_message(results("hello", False))
+    await source._on_close()
+
+    collected = [event async for event in source.events()]
+
+    assert len(collected) == 1
+    assert (collected[0].phrase_id, collected[0].text, collected[0].is_final) == (
+        0,
+        "hello",
+        False,
+    )
+
+
+async def test_messages_dropped_by_the_phrase_tracker_produce_no_event():
+    source = DeepgramSource(make_settings(), 16000)
+
+    await source._on_message({"type": "Metadata"})  # non-Results: dropped
+    await source._on_message(results("", True))  # empty transcript: dropped
+    await source._on_message(results("hello", False))
+    await source._on_close()
+
+    collected = [event async for event in source.events()]
+
+    assert len(collected) == 1
+    assert collected[0].text == "hello"
+
+
+async def test_events_terminates_cleanly_after_on_close_rather_than_hanging():
+    source = DeepgramSource(make_settings(), 16000)
+    await source._on_close()
+
+    async def drain():
+        return [event async for event in source.events()]
+
+    # wait_for guards against a regression that makes events() hang forever
+    # instead of terminating once the sentinel is seen.
+    collected = await asyncio.wait_for(drain(), timeout=1)
+    assert collected == []
+
+
+async def test_aclose_is_safe_to_call_twice_and_before_connect():
+    source = DeepgramSource(make_settings(), 16000)
+
+    # Never connected: _listener and _ctx are both still None.
+    await source.aclose()
+    # Calling again must not raise either.
+    await source.aclose()
+
+
+async def test_on_error_causes_events_to_raise_deepgram_stream_error():
+    source = DeepgramSource(make_settings(), 16000)
+
+    await source._on_error(RuntimeError("boom"))
+
+    with pytest.raises(DeepgramStreamError):
+        async for _ in source.events():
+            pass
+
+
+async def test_a_graceful_close_terminates_without_raising():
+    source = DeepgramSource(make_settings(), 16000)
+
+    await source._on_close()
+
+    # Must not raise DeepgramStreamError — only _on_error does that.
+    collected = [event async for event in source.events()]
+    assert collected == []
+
+
+async def test_events_already_queued_are_yielded_before_the_error_is_raised():
+    source = DeepgramSource(make_settings(), 16000)
+
+    await source._on_message(results("hello", False))
+    await source._on_message(results("hello there", True))
+    await source._on_error(RuntimeError("boom"))
+
+    collected = []
+    with pytest.raises(DeepgramStreamError):
+        async for event in source.events():
+            collected.append(event)
+
+    assert [event.text for event in collected] == ["hello", "hello there"]

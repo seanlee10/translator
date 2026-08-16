@@ -11,6 +11,11 @@ from app.models import TranscriptEvent
 logger = logging.getLogger(__name__)
 
 
+class DeepgramStreamError(RuntimeError):
+    """Raised from events() when the stream ended because of an error,
+    as opposed to a graceful close."""
+
+
 def connect_params(settings: Settings, sample_rate: int) -> dict[str, str]:
     """Every value is a string — the SDK types these as Optional[str]."""
     return {
@@ -86,6 +91,7 @@ class DeepgramSource:
         self._ctx = None
         self._connection = None
         self._listener: asyncio.Task | None = None
+        self._error: Exception | None = None
 
     async def connect(self) -> None:
         self._ctx = self._client.listen.v1.connect(
@@ -107,6 +113,7 @@ class DeepgramSource:
 
     async def _on_error(self, error) -> None:
         logger.error("deepgram error: %s", error)
+        self._error = error
         self._queue.put_nowait(None)  # sentinel: end the stream
 
     async def _on_close(self, _event=None) -> None:
@@ -120,12 +127,15 @@ class DeepgramSource:
         while True:
             event = await self._queue.get()
             if event is None:
+                if self._error is not None:
+                    raise DeepgramStreamError(str(self._error))
                 return
             yield event
 
     async def aclose(self) -> None:
         if self._listener is not None:
             self._listener.cancel()
+            await asyncio.gather(self._listener, return_exceptions=True)
         if self._ctx is not None:
             try:
                 await self._ctx.__aexit__(None, None, None)
