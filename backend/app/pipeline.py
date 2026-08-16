@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -16,8 +17,12 @@ from app.models import (
     TranslationResult,
 )
 
+logger = logging.getLogger(__name__)
+
 Translate = Callable[[str, Sequence[ContextPair]], Awaitable[TranslationResult]]
 Emit = Callable[[BaseModel], Awaitable[None]]
+
+FINAL_RETRY_DELAY_S = 0.25
 
 
 @dataclass
@@ -53,12 +58,17 @@ class Pipeline:
         self._final_queue: asyncio.Queue[tuple[int, str]] = asyncio.Queue()
         self._final_worker: asyncio.Task | None = None
         self._interim_tasks: set[asyncio.Task] = set()
+        # Serializes CaptionOut emission so a stale provisional can never be
+        # written to the wire after the final that superseded it.
+        self._emit_lock = asyncio.Lock()
 
     def set_translate_interims(self, value: bool) -> None:
         """Runtime toggle driven by the browser's config message."""
         self._translate_interims = value
 
     async def start(self) -> None:
+        if self._final_worker is not None:
+            return
         self._final_worker = asyncio.create_task(self._run_final_worker())
 
     async def handle(self, event: TranscriptEvent) -> None:
@@ -82,22 +92,31 @@ class Pipeline:
         while True:
             phrase_id, text = await self._final_queue.get()
             try:
-                result = await self._translate_final(text)
-            except Exception as exc:  # noqa: BLE001 - shown in the UI, never fatal
-                await self._emit(
-                    ErrorOut(phrase_id=phrase_id, message=f"translation failed: {exc}")
-                )
-            else:
-                self._context.append(ContextPair(en=text, ko=result.ko))
-                await self._emit(
-                    CaptionOut(
-                        phrase_id=phrase_id,
-                        en=text,
-                        ko=result.ko,
-                        status="final",
-                        provider=result.provider,
-                        latency_ms=result.latency_ms,
+                try:
+                    result = await self._translate_final(text)
+                except Exception as exc:  # noqa: BLE001 - shown in the UI, never fatal
+                    await self._emit(
+                        ErrorOut(
+                            phrase_id=phrase_id,
+                            message=f"translation failed: {exc}",
+                        )
                     )
+                else:
+                    self._context.append(ContextPair(en=text, ko=result.ko))
+                    async with self._emit_lock:
+                        await self._emit(
+                            CaptionOut(
+                                phrase_id=phrase_id,
+                                en=text,
+                                ko=result.ko,
+                                status="final",
+                                provider=result.provider,
+                                latency_ms=result.latency_ms,
+                            )
+                        )
+            except Exception:  # noqa: BLE001 - a broken emit must not kill the worker
+                logger.exception(
+                    "final worker: unhandled error for phrase %s", phrase_id
                 )
             finally:
                 self._final_queue.task_done()
@@ -108,6 +127,7 @@ class Pipeline:
         try:
             return await self._call(text, context)
         except Exception:
+            await asyncio.sleep(FINAL_RETRY_DELAY_S)
             return await self._call(text, context)
 
     async def _call(
@@ -149,19 +169,23 @@ class Pipeline:
         finally:
             state.in_flight = False
 
-        if state.closed:
-            return  # sequence guard: a final already won this phrase
+        # The lock serializes against the finals worker's own CaptionOut emit,
+        # so the recheck below is airtight: no final can slip an emit between
+        # this check and this task's own emit call.
+        async with self._emit_lock:
+            if state.closed:
+                return  # sequence guard: a final already won this phrase
 
-        await self._emit(
-            CaptionOut(
-                phrase_id=event.phrase_id,
-                en=event.text,
-                ko=result.ko,
-                status="provisional",
-                provider=result.provider,
-                latency_ms=result.latency_ms,
+            await self._emit(
+                CaptionOut(
+                    phrase_id=event.phrase_id,
+                    en=event.text,
+                    ko=result.ko,
+                    status="provisional",
+                    provider=result.provider,
+                    latency_ms=result.latency_ms,
+                )
             )
-        )
 
     # ---- lifecycle ----
 
@@ -173,8 +197,11 @@ class Pipeline:
             await self._final_queue.join()
 
     async def aclose(self) -> None:
-        for task in list(self._interim_tasks):
+        tasks = list(self._interim_tasks)
+        for task in tasks:
             task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         if self._final_worker is not None:
             self._final_worker.cancel()
             try:

@@ -142,6 +142,63 @@ async def test_a_failing_final_emits_an_error_retries_once_and_keeps_going():
     assert [c.phrase_id for c in recorder.captions()] == [1]
 
 
+async def test_context_order_is_correct_despite_uneven_latency():
+    class SlowFirst:
+        def __init__(self):
+            self.n = 0
+            self.calls: list[tuple[str, list[tuple[str, str]]]] = []
+
+        async def __call__(self, text, context):
+            self.n += 1
+            self.calls.append((text, [(c.en, c.ko) for c in context]))
+            await asyncio.sleep(0.05 if self.n == 1 else 0)
+            return TranslationResult(
+                ko=f"[ko]{text}", provider="anthropic", latency_ms=1
+            )
+
+    _, translator = await run(
+        [
+            TranscriptEvent(phrase_id=0, text="first", is_final=True),
+            TranscriptEvent(phrase_id=1, text="second", is_final=True),
+        ],
+        translator=SlowFirst(),
+    )
+
+    # A naive create_task-per-final implementation would let "second"'s
+    # translation call race ahead of "first"'s and see an empty context.
+    # The serialized worker guarantees phrase order regardless of latency.
+    assert translator.calls[1][1] == [("first", "[ko]first")]
+
+
+async def test_handle_never_blocks_on_translation():
+    gate = asyncio.Event()
+
+    class Gated:
+        async def __call__(self, text, context):
+            await gate.wait()
+            return TranslationResult(
+                ko=f"[ko]{text}", provider="anthropic", latency_ms=1
+            )
+
+    settings = make_settings()
+    translator = Gated()
+    recorder = Recorder()
+    pipeline = Pipeline(translate=translator, emit=recorder, settings=settings)
+    await pipeline.start()
+
+    # handle() must return as soon as the final is enqueued, not once it is
+    # translated -- the caller is the live transcript read loop.
+    await pipeline.handle(TranscriptEvent(phrase_id=0, text="hello", is_final=True))
+
+    assert recorder.captions() == []
+
+    gate.set()
+    await pipeline.drain()
+    await pipeline.aclose()
+
+    assert [c.phrase_id for c in recorder.captions()] == [0]
+
+
 async def test_a_failed_phrase_does_not_enter_the_context_window():
     class OnlyGood:
         async def __call__(self, text, context):
