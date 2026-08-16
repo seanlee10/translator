@@ -1,0 +1,122 @@
+# Live Caption Translator
+
+Speak English into your microphone; see English and Korean captions side by side
+in real time. Deepgram transcribes; Claude Haiku 4.5 or Qwen3.6-27B translates —
+switchable mid-session so you can compare them on the same speech.
+
+## Setup
+
+```bash
+cp .env.example .env
+# Edit .env and add DEEPGRAM_API_KEY, ANTHROPIC_API_KEY, and GROQ_API_KEY.
+# .env is git-ignored — never commit it.
+
+cd backend && pip install -e ".[dev]" && cd ..
+cd frontend && npm install && cd ..
+```
+
+## Run
+
+Two terminals:
+
+```bash
+# Terminal 1 — backend on :8000
+cd backend && uvicorn app.main:app --reload
+
+# Terminal 2 — frontend on :5173
+cd frontend && npm run dev
+```
+
+Open http://localhost:5173, click **Start listening**, allow microphone access.
+
+The backend's CORS is locked to exactly `http://localhost:5173`; serving the
+frontend from any other origin or port will be rejected.
+
+## Tests
+
+```bash
+cd backend && python -m pytest -v
+```
+
+73 tests, all passing, with no network access and no API keys set — the suite
+builds `Settings` directly with placeholder key strings in-process rather than
+reading `.env` or hitting any provider. A global 30s per-test timeout
+(`pytest-timeout`, configured in `backend/pyproject.toml`) guards against a
+hang in async code silently blocking the suite.
+
+### Frontend type-check
+
+```bash
+cd frontend && npx tsc --build --noEmit --force
+```
+
+Use the `--build` form, not plain `npx tsc --noEmit`. This project's
+`tsconfig.json` is a solution-style file (`"files": []` plus `references`),
+so plain `tsc --noEmit` type-checks zero files and exits `0` even when the
+code has type errors. `--build` follows the references and actually compiles
+`tsconfig.app.json` and `tsconfig.node.json`.
+
+## Comparing the two models
+
+Switch the **Model** dropdown mid-session. Each transcript row shows which model
+produced its Korean and how long the call took, and **Export** includes both, so
+you can compare quality and latency on identical speech.
+
+Note that Qwen3.6-27B is on Groq's **preview** tier and may be withdrawn at short
+notice. Provider failures are isolated per phrase and never end the session —
+if Qwen starts failing, switch back to Claude from the **Model** dropdown at
+any time.
+
+## Tuning
+
+All knobs live in `.env` (see `.env.example`); every variable below has a
+default in `backend/app/config.py` and can be overridden without touching code.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `DEFAULT_PROVIDER` | `anthropic` | Which model (`anthropic` or `groq`) a new session starts with |
+| `ANTHROPIC_MODEL` | `claude-haiku-4-5` | Claude model used for translation |
+| `GROQ_MODEL` | `qwen/qwen3.6-27b` | Groq model used for translation |
+| `DEEPGRAM_MODEL` | `nova-3` | Deepgram transcription model |
+| `TRANSLATE_INTERIMS` | `true` | `false` translates only completed phrases — Korean lags more, costs less |
+| `DEBOUNCE_MS` | `400` | Minimum gap between translations of the same in-progress phrase |
+| `CONTEXT_PAIRS` | `3` | Prior phrases sent as context for terminology consistency |
+| `KOREAN_REGISTER` | `합니다체` | Korean speech level, e.g. `해요체` for a softer register |
+| `ENDPOINTING_MS` | `300` | Lower = shorter phrases, faster finals, more API calls |
+| `UTTERANCE_END_MS` | `1000` | Deepgram silence duration used to detect utterance end |
+
+The **Finals only** checkbox toggles `TRANSLATE_INTERIMS` for the current
+session, so you can feel the latency difference without a restart.
+
+## Manual verification checklist
+
+Automated tests cover backend logic only. Before relying on the app, verify
+the full pipeline by hand with both servers running and real API keys in
+`.env`:
+
+1. `http://localhost:8000/health` returns `{"status":"ok"}`.
+2. The page loads showing status `idle`.
+3. **Start listening** prompts for microphone permission; status becomes `listening`.
+4. Speaking produces English text within roughly 300 ms.
+5. Dimmed italic Korean appears within roughly 1 second and turns solid at each phrase boundary.
+6. Each row shows a model label and a latency figure.
+7. Switching the **Model** dropdown mid-session changes the label on subsequent rows, with no reconnect and no lost audio.
+8. **Finals only** visibly removes the dimmed intermediate stage.
+9. Scrolling up reveals **Jump to live**; clicking re-pins.
+10. **Export** downloads a transcript containing both languages plus provenance.
+
+If provisional Korean feels sluggish, lower `DEBOUNCE_MS`; if it feels jumpy
+or costly, raise it or use finals-only.
+
+## Known limitations (by design)
+
+- **No Deepgram reconnect.** A dropped Deepgram connection ends the session
+  with a fatal error rather than retrying.
+- **No hosting, authentication, or rate limiting.** This is a local
+  single-user dev tool.
+- **English source, Korean target only.**
+- **`is_final` only.** Phrase boundaries rely on Deepgram's `is_final` flag,
+  not `speech_final` / `UtteranceEnd`. If phrases run short in practice, tune
+  `UTTERANCE_END_MS` before changing code.
+- **Shared prompt across providers.** Claude and Groq receive a
+  byte-identical translation prompt by design, to keep the comparison fair.
