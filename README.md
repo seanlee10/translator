@@ -37,6 +37,35 @@ Open http://localhost:5173, click **Start listening**, allow microphone access.
 The backend's CORS is locked to exactly `http://localhost:5173`; serving the
 frontend from any other origin or port will be rejected.
 
+### macOS presentation overlay
+
+For a normal browser preview, click **Open overlay**. This opens the last two
+English/Korean phrases in a caption-only popup and keeps it synchronized with
+the control screen through `BroadcastChannel`.
+
+For a real macOS presentation overlay that stays above Keynote or PowerPoint
+full-screen, run the Electron desktop shell instead:
+
+```bash
+# Terminal 1 — backend
+cd backend && uvicorn app.main:app --reload
+
+# Terminal 2 — Vite + Electron control window
+cd frontend && npm run desktop:dev
+```
+
+Click **Open overlay** in the desktop control window. The overlay:
+
+- prefers an attached external display, falling back to the MacBook display;
+- is transparent, frameless, always on top, and visible over full-screen Spaces;
+- ignores mouse input, so presentation controls remain clickable underneath;
+- shows only the newest two phrases, with Korean emphasized for the audience.
+
+For the production-built frontend, use `cd frontend && npm run desktop` while
+the backend is running. This builds `dist/` and launches Electron without the
+Vite development server. Press `Control+C` in the launching terminal or quit
+the desktop app normally when the presentation ends.
+
 ## Tests
 
 ```bash

@@ -1,37 +1,59 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import { Controls } from "./components/Controls";
+import { OverlayView } from "./components/OverlayView";
 import { TranscriptView } from "./components/TranscriptView";
 import { useAudioCapture } from "./hooks/useAudioCapture";
 import { useCaptionSocket, type Provider } from "./hooks/useCaptionSocket";
+import {
+  createOverlaySnapshot,
+  OVERLAY_CHANNEL,
+  type OverlayMessage,
+  type OverlaySnapshot,
+} from "./lib/overlay";
+import {
+  nextTheme,
+  normalizeTheme,
+  THEME_STORAGE_KEY,
+  type Theme,
+} from "./lib/theme";
 
 const WS_URL = "ws://localhost:8000/ws/session";
+const IS_OVERLAY = new URLSearchParams(window.location.search).has("overlay");
 
 export default function App() {
+  return IS_OVERLAY ? <OverlayView /> : <ControlCenter />;
+}
+
+function ControlCenter() {
+  const [theme, setTheme] = useState<Theme>(() =>
+    normalizeTheme(localStorage.getItem(THEME_STORAGE_KEY)),
+  );
   const [fontSize, setFontSize] = useState(22);
   const [finalsOnly, setFinalsOnly] = useState(false);
   const [provider, setProvider] = useState<Provider>("anthropic");
 
   const socket = useCaptionSocket(WS_URL);
   const audio = useAudioCapture();
-
-  // Whether `start` has actually been sent for the current session. Config
-  // changes made before this is true (e.g. while the mic permission prompt
-  // is still up) must not be sent to the server — it has no session to
-  // configure yet and rejects them. Set true at the same point sendStart()
-  // fires, reset on stop.
   const sessionStartedRef = useRef(false);
-
-  // Mirrors of the latest UI selections. The `onChunk` callback below is
-  // created once per `audio.start()` call (its closure is fixed at that
-  // moment), but the user can change these controls *after* Start is
-  // clicked and *before* the first audio chunk arrives (e.g. while a real
-  // permission dialog is up) — reading refs instead of the closed-over
-  // state values ensures the initial config reflects whatever was selected
-  // at the moment the session truly begins, not at the moment Start was
-  // clicked.
   const finalsOnlyRef = useRef(finalsOnly);
   const providerRef = useRef(provider);
+  const overlayChannelRef = useRef<BroadcastChannel | null>(null);
+  const snapshotRef = useRef<OverlaySnapshot>(
+    createOverlaySnapshot([], "idle", fontSize),
+  );
+
+  snapshotRef.current = createOverlaySnapshot(
+    socket.phrases,
+    socket.status,
+    fontSize,
+  );
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
+
   useEffect(() => {
     finalsOnlyRef.current = finalsOnly;
   }, [finalsOnly]);
@@ -39,16 +61,25 @@ export default function App() {
     providerRef.current = provider;
   }, [provider]);
 
-  // A fatal server error ends the session: the backend has torn its side
-  // down, so the mic must stop and the socket must close too. Without this
-  // the button still read "Stop", the pill still read "listening", and the
-  // mic indicator stayed lit over a dead session. The error banner is left
-  // in place (neither audio.stop() nor socket.disconnect() clears it), and
-  // connect() resets `fatal` so the next Start runs clean.
-  //
-  // The ref makes this fire exactly once per fatal error: `socket` and
-  // `audio` are fresh objects on every render, so the effect body re-runs
-  // constantly and must be idempotent.
+  useEffect(() => {
+    const channel = new BroadcastChannel(OVERLAY_CHANNEL);
+    overlayChannelRef.current = channel;
+    channel.onmessage = (event: MessageEvent<OverlayMessage>) => {
+      if (event.data.type === "ready") channel.postMessage(snapshotRef.current);
+    };
+    channel.postMessage(snapshotRef.current);
+
+    return () => {
+      channel.close();
+      overlayChannelRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    overlayChannelRef.current?.postMessage(snapshotRef.current);
+    window.translatorDesktop?.publishOverlaySnapshot(snapshotRef.current);
+  }, [socket.phrases, socket.status, fontSize]);
+
   const fatalHandledRef = useRef(false);
   useEffect(() => {
     if (!socket.fatal) {
@@ -75,10 +106,6 @@ export default function App() {
     await audio.start((pcm, sampleRate) => {
       if (!started) {
         socket.sendStart(sampleRate);
-        // Apply current UI selections to the fresh session — read from
-        // refs so a change made during the permission-prompt gap is what
-        // actually gets sent, not a stale closure over the values at the
-        // moment Start was clicked.
         socket.sendConfig({
           translateInterims: !finalsOnlyRef.current,
           provider: providerRef.current,
@@ -92,10 +119,6 @@ export default function App() {
 
   const changeFinalsOnly = (value: boolean) => {
     setFinalsOnly(value);
-    // Before the session has actually started, there is nothing to
-    // configure server-side yet (the backend rejects config before
-    // start) — the state update above is enough; the initial sendConfig
-    // in the onChunk callback will pick up finalsOnlyRef's latest value.
     if (sessionStartedRef.current) {
       socket.sendConfig({ translateInterims: !value });
     }
@@ -108,31 +131,86 @@ export default function App() {
     }
   };
 
+  const openOverlay = async () => {
+    if (window.translatorDesktop) {
+      await window.translatorDesktop.openOverlay();
+      return;
+    }
+
+    window.open(
+      `${window.location.pathname}?overlay=1`,
+      "translator-presentation-overlay",
+      "popup=yes,width=1280,height=360,left=80,top=620",
+    );
+  };
+
+  const visibleError = audio.error ?? socket.error;
+
   return (
-    <div className="app">
-      <h1>Live Caption Translator — English → 한국어</h1>
+    <main className="app-shell">
+      <div className="ambient ambient-one" />
+      <div className="ambient ambient-two" />
 
-      <Controls
-        active={audio.active}
-        status={socket.status}
-        devices={audio.devices}
-        deviceId={audio.deviceId}
-        onDeviceChange={audio.setDeviceId}
-        onToggle={toggle}
-        fontSize={fontSize}
-        onFontSize={setFontSize}
-        finalsOnly={finalsOnly}
-        onFinalsOnly={changeFinalsOnly}
-        provider={provider}
-        onProvider={changeProvider}
-        phrases={socket.phrases}
-      />
+      <header className="topbar">
+        <div className="brand">
+          <div className="brand-mark" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+          <div>
+            <p className="eyebrow">LIVE INTERPRETATION STUDIO</p>
+            <h1>English <span>→</span> 한국어</h1>
+          </div>
+        </div>
 
-      {(audio.error || socket.error) && (
-        <p className="error">{audio.error ?? socket.error}</p>
+        <div className="header-actions">
+          <button
+            className="ghost-button theme-button"
+            onClick={() => setTheme((current) => nextTheme(current))}
+            aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+            aria-pressed={theme === "light"}
+            title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+          >
+            <span className={`theme-icon ${theme}`} aria-hidden="true" />
+          </button>
+          <div className={`status-pill ${socket.status}`}>
+            <span className="status-dot" />
+            {socket.status === "idle" ? "Ready" : socket.status}
+          </div>
+          <button className="ghost-button overlay-button" onClick={openOverlay}>
+            <span className="screen-icon" aria-hidden="true" />
+            Open overlay
+          </button>
+        </div>
+      </header>
+
+      {visibleError && (
+        <div className="error-banner" role="alert">
+          <span>!</span>
+          <p>{visibleError}</p>
+        </div>
       )}
 
-      <TranscriptView phrases={socket.phrases} fontSize={fontSize} />
-    </div>
+      <div className="workspace">
+        <TranscriptView phrases={socket.phrases} fontSize={fontSize} />
+        <Controls
+          active={audio.active}
+          status={socket.status}
+          devices={audio.devices}
+          deviceId={audio.deviceId}
+          onDeviceChange={audio.setDeviceId}
+          onToggle={toggle}
+          fontSize={fontSize}
+          onFontSize={setFontSize}
+          finalsOnly={finalsOnly}
+          onFinalsOnly={changeFinalsOnly}
+          provider={provider}
+          onProvider={changeProvider}
+          phrases={socket.phrases}
+          onOpenOverlay={openOverlay}
+        />
+      </div>
+    </main>
   );
 }

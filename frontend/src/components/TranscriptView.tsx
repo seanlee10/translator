@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import type { Phrase } from "../hooks/useCaptionSocket";
 
 const PROVIDER_LABEL: Record<string, string> = {
-  anthropic: "Haiku 4.5",
-  groq: "Qwen3.6",
+  anthropic: "Claude Haiku 4.5",
+  groq: "Qwen 3.6 · Groq",
 };
 
 interface Props {
@@ -28,37 +28,84 @@ export function TranscriptView({ phrases, fontSize }: Props) {
   };
 
   return (
-    <div className="transcript-wrapper">
-      <div
-        className="transcript"
-        ref={scrollRef}
-        onScroll={onScroll}
-        style={{ fontSize: `${fontSize}px` }}
-      >
-        {phrases.map((phrase) => (
-          <div className="row" key={phrase.phraseId}>
-            <div className="col en">{phrase.en}</div>
-            <div className="col ko-cell">
-              <span
-                className={phrase.status !== "final" ? "ko provisional" : "ko"}
-              >
-                {phrase.ko ?? " "}
-              </span>
-              {phrase.provider && (
-                <span className="provenance">
-                  {PROVIDER_LABEL[phrase.provider] ?? phrase.provider}
-                  {phrase.latencyMs !== null && ` · ${phrase.latencyMs}ms`}
-                </span>
-              )}
-            </div>
-          </div>
-        ))}
+    <section className="transcript-panel">
+      <header className="transcript-header">
+        <div>
+          <p className="panel-kicker">LIVE TRANSCRIPT</p>
+          <h2>Conversation</h2>
+        </div>
+        <div className="language-legend">
+          <span><i className="legend-dot en-dot" />English</span>
+          <span><i className="legend-dot ko-dot" />한국어</span>
+        </div>
+      </header>
+
+      <div className="column-headings" aria-hidden="true">
+        <span>ORIGINAL</span>
+        <span>TRANSLATION</span>
       </div>
-      {!pinned && (
-        <button className="jump" onClick={() => setPinned(true)}>
-          Jump to live ↓
-        </button>
-      )}
-    </div>
+
+      <div className="transcript-wrapper">
+        <div
+          className="transcript"
+          ref={scrollRef}
+          onScroll={onScroll}
+          style={{ fontSize: `${fontSize}px` }}
+        >
+          {phrases.length === 0 ? (
+            <div className="empty-state">
+              <div className="sound-orbit" aria-hidden="true">
+                <span className="orbit-ring ring-one" />
+                <span className="orbit-ring ring-two" />
+                <div className="wave-bars">
+                  <i /><i /><i /><i /><i />
+                </div>
+              </div>
+              <h3>Your live captions will appear here</h3>
+              <p>Choose a model, start listening, and begin speaking in English.</p>
+              <div className="empty-flow">
+                <span>EN speech</span><i>→</i><span>Deepgram</span><i>→</i><span>한국어</span>
+              </div>
+            </div>
+          ) : (
+            phrases.map((phrase, index) => (
+              <article
+                className={`transcript-row ${
+                  index === phrases.length - 1 ? "is-current" : ""
+                }`}
+                key={phrase.phraseId}
+              >
+                <div className="phrase-number">
+                  {String(phrase.phraseId + 1).padStart(2, "0")}
+                </div>
+                <div className="caption-col en">
+                  <p>{phrase.en}</p>
+                  <span className="language-tag">EN</span>
+                </div>
+                <div className="caption-col ko-cell">
+                  <p className={phrase.status !== "final" ? "ko provisional" : "ko"}>
+                    {phrase.ko ?? "번역을 기다리는 중…"}
+                  </p>
+                  <div className="caption-meta">
+                    <span className="language-tag ko-tag">KO</span>
+                    {phrase.provider && (
+                      <span className="provenance">
+                        {PROVIDER_LABEL[phrase.provider] ?? phrase.provider}
+                        {phrase.latencyMs !== null && ` · ${phrase.latencyMs}ms`}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </article>
+            ))
+          )}
+        </div>
+        {!pinned && (
+          <button className="jump-button" onClick={() => setPinned(true)}>
+            Jump to live <span>↓</span>
+          </button>
+        )}
+      </div>
+    </section>
   );
 }

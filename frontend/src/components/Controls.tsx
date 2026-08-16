@@ -14,6 +14,7 @@ interface Props {
   provider: Provider;
   onProvider: (p: Provider) => void;
   phrases: Phrase[];
+  onOpenOverlay: () => void;
 }
 
 export function Controls(props: Props) {
@@ -35,63 +36,133 @@ export function Controls(props: Props) {
   };
 
   return (
-    <div className="controls">
-      <button className="primary" onClick={props.onToggle}>
-        {props.active ? "Stop" : "Start listening"}
+    <aside className="control-panel">
+      <div className="panel-heading">
+        <div>
+          <p className="panel-kicker">SESSION</p>
+          <h2>Control room</h2>
+        </div>
+        <span className="command-hint">⌘ ↵</span>
+      </div>
+
+      <button
+        className={`listen-button ${props.active ? "is-active" : ""}`}
+        onClick={props.onToggle}
+      >
+        <span className="listen-icon" aria-hidden="true">
+          {props.active ? <i className="stop-square" /> : <i className="mic-stem" />}
+        </span>
+        <span>
+          <strong>{props.active ? "Stop listening" : "Start listening"}</strong>
+          <small>
+            {props.active ? "Microphone is live" : "Begin live transcription"}
+          </small>
+        </span>
+        <span className="button-arrow">{props.active ? "■" : "→"}</span>
       </button>
 
-      <span className={`status ${props.status}`}>{props.status}</span>
+      <section className="control-section">
+        <div className="section-label">
+          <span>Translation model</span>
+          <span className="section-value">
+            {props.provider === "anthropic" ? "Haiku 4.5" : "Qwen 3.6"}
+          </span>
+        </div>
+        <div className="model-toggle" role="group" aria-label="Translation model">
+          <button
+            className={props.provider === "anthropic" ? "selected" : ""}
+            onClick={() => props.onProvider("anthropic")}
+          >
+            <span className="model-orb anthropic-orb">A</span>
+            <span><strong>Claude</strong><small>Haiku 4.5</small></span>
+          </button>
+          <button
+            className={props.provider === "groq" ? "selected" : ""}
+            onClick={() => props.onProvider("groq")}
+          >
+            <span className="model-orb groq-orb">Q</span>
+            <span><strong>Qwen</strong><small>Groq preview</small></span>
+          </button>
+        </div>
+      </section>
 
-      <label>
-        Model
-        <select
-          value={props.provider}
-          onChange={(e) => props.onProvider(e.target.value as Provider)}
+      <section className="control-section">
+        <label className="field-label" htmlFor="microphone">
+          Microphone source
+        </label>
+        <div className="select-wrap">
+          <span className="field-icon" aria-hidden="true">⌁</span>
+          <select
+            id="microphone"
+            value={props.deviceId ?? ""}
+            onChange={(e) => props.onDeviceChange(e.target.value)}
+            disabled={props.active}
+          >
+            <option value="">Default microphone</option>
+            {props.devices.map((d) => (
+              <option key={d.deviceId} value={d.deviceId}>
+                {d.label || "Microphone"}
+              </option>
+            ))}
+          </select>
+        </div>
+      </section>
+
+      <section className="control-section">
+        <div className="section-label">
+          <label htmlFor="caption-size">Caption size</label>
+          <span className="section-value">{props.fontSize}px</span>
+        </div>
+        <div className="range-row">
+          <span>A</span>
+          <input
+            id="caption-size"
+            type="range"
+            min={16}
+            max={40}
+            value={props.fontSize}
+            onChange={(e) => props.onFontSize(Number(e.target.value))}
+          />
+          <span className="range-large">A</span>
+        </div>
+      </section>
+
+      <section className="control-section toggle-row">
+        <div>
+          <strong>Final captions only</strong>
+          <p>Skip provisional translations</p>
+        </div>
+        <label className="switch">
+          <input
+            type="checkbox"
+            checked={props.finalsOnly}
+            onChange={(e) => props.onFinalsOnly(e.target.checked)}
+          />
+          <span />
+        </label>
+      </section>
+
+      <div className="panel-spacer" />
+
+      <div className="secondary-actions">
+        <button className="secondary-button" onClick={props.onOpenOverlay}>
+          <span className="screen-icon" aria-hidden="true" />
+          Presentation overlay
+        </button>
+        <button
+          className="secondary-button"
+          onClick={exportTranscript}
+          disabled={!props.phrases.length}
         >
-          <option value="anthropic">Claude Haiku 4.5</option>
-          <option value="groq">Qwen3.6-27B (Groq)</option>
-        </select>
-      </label>
+          <span aria-hidden="true">⇩</span>
+          Export transcript
+        </button>
+      </div>
 
-      <label>
-        Microphone
-        <select
-          value={props.deviceId ?? ""}
-          onChange={(e) => props.onDeviceChange(e.target.value)}
-          disabled={props.active}
-        >
-          <option value="">Default microphone</option>
-          {props.devices.map((d) => (
-            <option key={d.deviceId} value={d.deviceId}>
-              {d.label || "Microphone"}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label>
-        Size
-        <input
-          type="range"
-          min={14}
-          max={40}
-          value={props.fontSize}
-          onChange={(e) => props.onFontSize(Number(e.target.value))}
-        />
-      </label>
-
-      <label title="Translate only completed phrases — slower Korean, fewer API calls">
-        <input
-          type="checkbox"
-          checked={props.finalsOnly}
-          onChange={(e) => props.onFinalsOnly(e.target.checked)}
-        />
-        Finals only
-      </label>
-
-      <button onClick={exportTranscript} disabled={!props.phrases.length}>
-        Export
-      </button>
-    </div>
+      <footer className="panel-footer">
+        <span className={`footer-light ${props.status}`} />
+        Deepgram · {props.status === "listening" ? "streaming audio" : "standing by"}
+      </footer>
+    </aside>
   );
 }
