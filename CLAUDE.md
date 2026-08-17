@@ -10,7 +10,7 @@ Live caption translator: microphone → Deepgram streaming STT → Claude Haiku 
 # Backend (from backend/)
 pip install -e ".[dev]"
 uvicorn app.main:app --reload          # :8000
-python -m pytest -v                     # 106 tests
+python -m pytest -v                     # 109 tests
 python -m pytest tests/test_pipeline.py::test_a_late_interim_never_overwrites_a_finalized_phrase -v
 
 # Frontend (from frontend/)
@@ -50,6 +50,8 @@ Each phrase produces: several `transcript` events (English only, free) — **inc
 
 The final's `transcript` event is not redundant. It is what guarantees a row exists with the correct English even when the translation fails, which the spec's Error Handling section requires. The client ranks `transcript` as `interim`, so it refines English without regressing status or blanking Korean.
 
+**The frontend now reveals a row only once its phrase is terminal** (`status:"final"`, or a phrase-scoped `error` — see the Frontend section below), never on `transcript`/`interim` or `caption`/`provisional` alone. Those events still arrive and still update internal state (and drive the in-progress loader), but are never rendered as changing text — that's the point of this design: the backend's wire protocol (interim → zero-or-more provisional → final) is unchanged, only what the client chooses to draw from it changed.
+
 ### `pipeline.py` — the only stateful component
 
 It holds every timing and ordering decision, and **imports no I/O library** (no `anthropic`, `groq`, `deepgram`, `fastapi`). It receives a translate callable and an emit callable. That constraint is what makes the whole policy testable offline — do not break it.
@@ -57,7 +59,7 @@ It holds every timing and ordering decision, and **imports no I/O library** (no 
 Four invariants, each protecting something specific:
 
 - **Finals go through a single serialized `asyncio.Queue` worker.** Translations complete out of order; this is what keeps the rolling context in phrase order. Never translate finals with `create_task`.
-- **Interims are fire-and-forget with an in-flight guard** (`state.in_flight`): if a translation is already running for a phrase, the next interim is **skipped, never queued**. This makes the system self-limiting — a slow provider degrades to finals-only instead of growing a backlog.
+- **Interims are fire-and-forget with an in-flight guard** (`state.in_flight`): if a translation is already running for a phrase, the next interim is **skipped, never queued**. This makes the system self-limiting — a slow provider degrades to finals-only instead of growing a backlog. `settings.translate_interims` (`TRANSLATE_INTERIMS`) defaults to **`false`**: the frontend's terminal-only reveal never renders a provisional caption in the main view, so translating interims by default was pure wasted API spend. The debounce/in-flight/sequence-guard machinery itself is untouched and fully covered by tests with the flag explicitly on — it's still correct, just off by default. Toggle it via env or the `config` message's `translate_interims` field (the backend still handles that field; only the frontend's UI toggle for it was removed — see Frontend below).
 - **Sequence guard**: `_translate_interim` re-checks `state.closed` *inside* `_emit_lock` before emitting, so a slow provisional can never land on top of the final that superseded it.
 - **Debounce has no timer.** It is evaluated when each interim arrives (has `debounce_ms` elapsed since this phrase's last translation, or since it first appeared). Deterministic under an injected clock; correct in practice because if interims stop, the final follows within the endpointing window.
 
@@ -97,7 +99,11 @@ Three API constraints that will produce confusing failures if "cleaned up":
 ### Frontend
 
 - **Captions are keyed by `phrase_id` and replaced in place**, rendered in ascending `phrase_id` order — never arrival order. A `transcript` event must not blank Korean already present for that phrase (English updates faster; blanking flickers).
-- `STATUS_RANK` (interim < provisional < final) discards lower-rank updates. It uses **strict `<`** deliberately: multiple provisionals per phrase are normal, and `<=` would freeze captions at the first one.
+- `STATUS_RANK` (interim < provisional < final, with `error` ranked equal to `final`) discards lower-rank updates. It uses **strict `<`** deliberately: multiple provisionals per phrase are normal, and `<=` would freeze captions at the first one. `final` and `error` never need ranking against each other — the finals worker emits exactly one of `CaptionOut(final)` or a phrase-scoped `ErrorOut` per phrase, never both.
+- **A row only ever renders once its phrase is terminal.** `src/phraseDisplay.ts` (`isTerminalPhrase`/`visiblePhrases`/`hasInFlightPhrase`) is the single, unit-tested source of truth for "terminal": `status === "final" OR status === "error"`. **Not** `status === "final"` alone — that would silently drop every phrase whose translation failed, which is the exact bug the final's `transcript` event exists to prevent (see "The phrase model" above). `TranscriptView` renders `visiblePhrases(phrases)` for rows and shows a quiet, `prefers-reduced-motion`-aware pulsing-dots loader (`.phrase-loader`) whenever `hasInFlightPhrase(phrases)` is true, instead of ever rendering interim/provisional text.
+- **`useCaptionSocket`'s `Phrase.status` includes `"error"`**, set by `markPhraseError` when a phrase-scoped `ErrorOut` (`phrase_id` non-null) arrives. It preserves whatever English the phrase's prior `transcript` events already established — the wire's `ErrorOut` carries no English at all — and explicitly clears `ko`/`provider`/`latencyMs` to `null` rather than falling back to a stale provisional's values. `upsert`'s general merge only preserves existing `ko`/`provider`/`latencyMs` on an `"interim"` update now; every other status (`provisional`, `final`, `error`) is a real update that replaces those fields outright, including replacing them with `null`.
+- **The presentation overlay does not share the terminal-only reveal.** `OverlayView.tsx` (via `lib/overlay.ts`'s `createOverlaySnapshot`) renders straight from `socket.phrases` — the last two phrases, unfiltered by `phraseDisplay.ts` — and still styles a non-`"final"` phrase as `is-provisional` with a "번역 중…" placeholder. If `TRANSLATE_INTERIMS=true`, the overlay will still show that dimmed provisional stage even though the main transcript view never does. Keep this in mind if the overlay's display logic changes — the two are two independent readers of the same phrase stream, not one shared component.
+- **The "Finals only" UI toggle is gone.** It drove `translate_interims` for the current session, which the terminal-only reveal made meaningless to the user (provisional Korean was never shown either way). `TRANSLATE_INTERIMS` is env-only now. `sendConfig` no longer accepts a `translateInterims` field at all — the backend's `config` message handling for `translate_interims` is untouched and still reachable (by env restart, or by hand), only the frontend plumbing that sent it was removed.
 - `sendStart`/`sendConfig` **queue until the socket is open** and flush in order on `onopen`. `App` calls `connect()` then awaits `getUserMedia()`, so the socket usually opens first — but losing that race would throw `InvalidStateError` and silently kill the session.
 - **`connect()` clears the caption list.** Phrase IDs restart at 0 every session, so without the reset a restarted session's phrase 0 merges into the previous session's phrase 0 — stale Korean under new English, in solid final styling. `STATUS_RANK`'s strict `<` is correct and must stay; the reset is what makes it safe.
 - **`fatal` ends the session client-side.** `useCaptionSocket` exposes it and `App` reacts by stopping capture and disconnecting, leaving the error banner visible. `connect()` resets it so a restart is clean.

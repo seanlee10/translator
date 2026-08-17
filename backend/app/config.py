@@ -57,7 +57,18 @@ class Settings(BaseSettings):
     korean_register: str = "합니다체"
 
     # Trigger policy
-    translate_interims: bool = True
+    # The main transcript view never shows a row until its phrase is
+    # terminal (final or failed), so a "provisional" caption produced by
+    # translating an interim is never rendered there — translating interims
+    # by default is pure wasted API spend: 2-4x the calls per phrase for
+    # output nobody in the primary UI sees. Off by default. Setting this to
+    # true buys nothing in that main view, but the presentation overlay
+    # renders phrases straight from the wire without the same terminal-only
+    # gate, so it still shows the dimmed provisional stage when this is on.
+    # The interim translation machinery itself (debounce, in-flight guard,
+    # sequence guard) stays fully intact either way — this only flips
+    # whether it runs.
+    translate_interims: bool = False
     debounce_ms: int = 400
     context_pairs: int = 3
 

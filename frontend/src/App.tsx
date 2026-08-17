@@ -32,7 +32,6 @@ function ControlCenter() {
     normalizeTheme(localStorage.getItem(THEME_STORAGE_KEY)),
   );
   const [fontSize, setFontSize] = useState(22);
-  const [finalsOnly, setFinalsOnly] = useState(false);
   // Starts unset: the real choices come from the backend's GET /providers,
   // fetched below, and only ever a provider it actually offers.
   const [provider, setProvider] = useState<string | null>(null);
@@ -46,7 +45,6 @@ function ControlCenter() {
   const socket = useCaptionSocket(WS_URL);
   const audio = useAudioCapture();
   const sessionStartedRef = useRef(false);
-  const finalsOnlyRef = useRef(finalsOnly);
   const providerRef = useRef(provider);
   const overlayChannelRef = useRef<BroadcastChannel | null>(null);
   const snapshotRef = useRef<OverlaySnapshot>(
@@ -64,9 +62,6 @@ function ControlCenter() {
     localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
-  useEffect(() => {
-    finalsOnlyRef.current = finalsOnly;
-  }, [finalsOnly]);
   useEffect(() => {
     providerRef.current = provider;
   }, [provider]);
@@ -132,26 +127,18 @@ function ControlCenter() {
     await audio.start((pcm, sampleRate) => {
       if (!started) {
         socket.sendStart(sampleRate);
-        socket.sendConfig({
-          translateInterims: !finalsOnlyRef.current,
-          // Omitted entirely when no provider is selected (e.g. the server
-          // has none configured) rather than sending null/undefined —
-          // 'config' expects a real provider id when the key is present.
-          ...(providerRef.current ? { provider: providerRef.current } : {}),
-        });
+        // Only sent when a provider is actually selected (e.g. the server
+        // has none configured otherwise) — 'config' expects a real
+        // provider id when the field is present at all.
+        if (providerRef.current) {
+          socket.sendConfig({ provider: providerRef.current });
+        }
         started = true;
         sessionStartedRef.current = true;
       }
       socket.sendAudio(pcm);
     });
   }, [audio, socket, providersError, refetchProviders]);
-
-  const changeFinalsOnly = (value: boolean) => {
-    setFinalsOnly(value);
-    if (sessionStartedRef.current) {
-      socket.sendConfig({ translateInterims: !value });
-    }
-  };
 
   const changeProvider = (value: string) => {
     setProvider(value);
@@ -236,8 +223,6 @@ function ControlCenter() {
           onToggle={toggle}
           fontSize={fontSize}
           onFontSize={setFontSize}
-          finalsOnly={finalsOnly}
-          onFinalsOnly={changeFinalsOnly}
           provider={provider}
           onProvider={changeProvider}
           providers={providers}

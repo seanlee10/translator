@@ -10,8 +10,6 @@ interface Props {
   onToggle: () => void;
   fontSize: number;
   onFontSize: (px: number) => void;
-  finalsOnly: boolean;
-  onFinalsOnly: (v: boolean) => void;
   provider: string | null;
   onProvider: (p: string) => void;
   providers: ProviderInfo[];
@@ -146,21 +144,6 @@ export function Controls(props: Props) {
           />
           <span className="range-large">A</span>
         </div>
-      </section>
-
-      <section className="control-section toggle-row">
-        <div>
-          <strong>Final captions only</strong>
-          <p>Skip provisional translations</p>
-        </div>
-        <label className="switch">
-          <input
-            type="checkbox"
-            checked={props.finalsOnly}
-            onChange={(e) => props.onFinalsOnly(e.target.checked)}
-          />
-          <span />
-        </label>
       </section>
 
       <div className="panel-spacer" />

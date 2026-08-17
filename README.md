@@ -42,6 +42,37 @@ Open http://localhost:5173, click **Start listening**, allow microphone access.
 The backend's CORS is locked to exactly `http://localhost:5173`; serving the
 frontend from any other origin or port will be rejected.
 
+## How captions reveal
+
+A row appears only once its phrase has **settled** — reached a terminal
+state — rather than streaming in and rewriting itself as Deepgram refines
+each phrase. While a phrase is still being spoken or translated, a quiet
+pulsing-dots loader sits at the bottom of the transcript instead of any
+text; the loader conveys "still capturing/processing," not "here's a
+provisional answer that will change." This replaced an earlier design where
+partial English kept rewriting itself and a dimmed, italic "provisional"
+Korean guess appeared and was later replaced — real usage feedback found
+that constant churn tiring to read.
+
+A phrase settles one of two ways:
+
+- its final translation arrives — the row shows English and Korean, plus
+  which model produced the Korean and how long the call took; or
+- its translation **fails** — the row still shows the English (the backend
+  publishes it separately from the translation attempt for exactly this
+  reason) with a clear per-row error marker and no Korean, instead of the
+  phrase silently disappearing.
+
+Both are "terminal"; only the first is `status: "final"` on the wire. A
+design that revealed rows on "final" alone would drop every phrase whose
+translation failed — that bug was found and fixed once already in this
+project, and the row-reveal logic treats "final or failed" as the same
+terminal event on purpose to keep it fixed.
+
+`ENDPOINTING_MS` (see Tuning below) is now the main knob for how long a row
+takes to appear: it controls how long Deepgram waits before finalizing a
+phrase, so lowering it produces shorter phrases and quicker reveals.
+
 ### macOS presentation overlay
 
 For a normal browser preview, click **Open overlay**. This opens the last two
@@ -77,7 +108,7 @@ the desktop app normally when the presentation ends.
 cd backend && python -m pytest -v
 ```
 
-106 tests, all passing, with no network access and no API keys set — the suite
+109 tests, all passing, with no network access and no API keys set — the suite
 builds `Settings` directly with placeholder key strings in-process, with the
 env-file lookup disabled (`_env_file=None`), rather than reading `.env` or
 hitting any provider. A global 30s per-test timeout (`pytest-timeout`,
@@ -138,15 +169,18 @@ touching code.
 | `XAI_MODEL` | `grok-4.20-0309-non-reasoning` | xAI Grok model used for translation |
 | `XAI_BASE_URL` | `https://api.x.ai/v1` | xAI's OpenAI-compatible API base URL |
 | `DEEPGRAM_MODEL` | `nova-3` | Deepgram transcription model |
-| `TRANSLATE_INTERIMS` | `true` | `false` translates only completed phrases — Korean lags more, costs less |
+| `TRANSLATE_INTERIMS` | `false` | `true` also translates each debounced in-progress interim, at 2-4x the API calls. Since a row is only ever revealed once its phrase is terminal (see "How captions reveal" above), this buys nothing in the main transcript view — the extra "provisional" translations are simply never shown there. It does still reach the presentation overlay window, which renders phrases without that reveal gate. |
 | `DEBOUNCE_MS` | `400` | Minimum gap between translations of the same in-progress phrase |
 | `CONTEXT_PAIRS` | `3` | Prior phrases sent as context for terminology consistency |
 | `KOREAN_REGISTER` | `합니다체` | Korean speech level, e.g. `해요체` for a softer register |
 | `ENDPOINTING_MS` | `300` | Lower = shorter phrases, faster finals, more API calls |
 | `UTTERANCE_END_MS` | `1000` | Deepgram silence duration used to detect utterance end |
 
-The **Finals only** checkbox toggles `TRANSLATE_INTERIMS` for the current
-session, so you can feel the latency difference without a restart.
+`TRANSLATE_INTERIMS` is env-only now — there is no in-app toggle for it. The
+UI control that used to flip it ("Finals only") controlled exactly the
+distinction the terminal-only reveal now makes moot for the main view, so it
+was removed; restart the backend with the env var changed to feel the
+difference.
 
 ## Manual verification checklist
 
@@ -157,16 +191,25 @@ the full pipeline by hand with both servers running and real API keys in
 1. `http://localhost:8000/health` returns `{"status":"ok"}`.
 2. The page loads showing status `idle`.
 3. **Start listening** prompts for microphone permission; status becomes `listening`.
-4. Speaking produces English text within roughly 300 ms.
-5. Dimmed italic Korean appears within roughly 1 second and turns solid at each phrase boundary.
+4. Speaking produces a quiet pulsing-dots loader at the bottom of the
+   transcript almost immediately — no text changes while the phrase is
+   in progress.
+5. When the phrase finalizes (roughly `ENDPOINTING_MS` after you stop
+   speaking it), the loader is replaced by a settled row showing both
+   English and Korean — it never appears mid-phrase and never rewrites
+   itself afterward.
 6. Each row shows a model label and a latency figure.
 7. Switching the **Model** dropdown mid-session changes the label on subsequent rows, with no reconnect and no lost audio.
-8. **Finals only** visibly removes the dimmed intermediate stage.
+8. If a translation provider is failing (e.g. an invalid key), the row for
+   that phrase still appears with its English and a clear error marker
+   instead of no Korean and no error — the row is never silently dropped.
 9. Scrolling up reveals **Jump to live**; clicking re-pins.
 10. **Export** downloads a transcript containing both languages plus provenance.
 
-If provisional Korean feels sluggish, lower `DEBOUNCE_MS`; if it feels jumpy
-or costly, raise it or use finals-only.
+If rows feel slow to appear, lower `ENDPOINTING_MS` for shorter phrases and
+quicker reveals. `DEBOUNCE_MS` and `TRANSLATE_INTERIMS` no longer affect how
+soon a row is *revealed* — only `ENDPOINTING_MS` (phrase length) and the
+final translation call itself do.
 
 ## Known limitations (by design)
 
@@ -176,8 +219,9 @@ or costly, raise it or use finals-only.
   translated one at a time through a single queue to keep context in order.
   If a provider is persistently slower than speech, that queue grows and
   captions fall progressively further behind rather than degrading cleanly —
-  there is no drop policy. Switch models or enable **Finals only** if you see
-  it. (Interim translations are self-limiting and do not queue.)
+  there is no drop policy. Switch models if you see it. (Interim
+  translations, when `TRANSLATE_INTERIMS=true`, are self-limiting and do
+  not queue.)
 - **No hosting, authentication, or rate limiting.** This is a local
   single-user dev tool.
 - **English source, Korean target only.**

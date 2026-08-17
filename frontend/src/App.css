@@ -220,11 +220,26 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .caption-col p { margin: 0; overflow-wrap: anywhere; }
 .caption-col.en { color: #aeb3bc; font-weight: 400; }
 .caption-col .ko { color: #f2f3f6; font-weight: 510; }
-.caption-col .ko.provisional { color: #8f91b8; font-weight: 400; font-style: italic; }
 .language-tag { display: inline-block; margin-top: 11px; color: #555a62; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8px; letter-spacing: .1em; }
 .ko-tag { color: #6f70aa; }
 .caption-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .provenance { margin-top: 11px; color: #555a62; font-size: 9px; font-variant-numeric: tabular-nums; }
+/* A row's translation failed: English still shown (see phraseDisplay.ts —
+   this is the terminal-but-not-final case), Korean replaced by a clear,
+   quiet marker rather than left blank or silently dropped. */
+.caption-col .ko.error-marker { display: flex; align-items: center; gap: 7px; color: var(--danger); font-weight: 510; font-style: normal; }
+.error-mark { display: inline-grid; flex: 0 0 auto; place-items: center; width: 15px; height: 15px; border-radius: 50%; background: rgba(255,107,122,.16); color: var(--danger); font-size: 10px; font-weight: 700; }
+.provenance.error-text { color: var(--danger); opacity: .85; }
+/* The in-progress-phrase loader: sits at the bottom of the transcript
+   while a phrase is being spoken/translated (see TranscriptView's
+   `inFlight`). Deliberately quiet — three small pulsing dots, not a
+   spinner — since the point of this feature is less visual noise, not a
+   new source of it; it only needs to signal "not frozen". */
+.phrase-loader { display: flex; align-items: center; gap: 10px; padding: 16px 24px 18px 67px; color: var(--muted); font-size: 11px; }
+.phrase-loader-dots { display: inline-flex; align-items: center; gap: 4px; }
+.phrase-loader-dots i { display: block; width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .3; animation: loaderPulse 1.3s ease-in-out infinite; }
+.phrase-loader-dots i:nth-child(2) { animation-delay: .16s; }
+.phrase-loader-dots i:nth-child(3) { animation-delay: .32s; }
 .jump-button { position: absolute; right: 20px; bottom: 18px; padding: 8px 13px; border: 1px solid rgba(113,112,255,.25); border-radius: 999px; color: #c8c9ff; background: rgba(40,39,80,.9); font-size: 11px; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
 .jump-button span { margin-left: 5px; }
 
@@ -265,15 +280,6 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .range-row { display: grid; grid-template-columns: 13px 1fr 17px; align-items: center; gap: 10px; color: #62666d; font-size: 9px; }
 .range-large { font-size: 14px; }
 .range-row input { width: 100%; accent-color: var(--accent); }
-.toggle-row { display: flex; align-items: center; justify-content: space-between; }
-.toggle-row strong { display: block; color: #aeb3bc; font-size: 10px; font-weight: 510; }
-.toggle-row p { margin: 3px 0 0; color: #565a61; font-size: 8px; }
-.switch { position: relative; width: 34px; height: 19px; }
-.switch input { position: absolute; opacity: 0; }
-.switch span { position: absolute; inset: 0; border: 1px solid var(--border); border-radius: 999px; background: #202226; transition: background .18s ease; }
-.switch span::after { position: absolute; top: 3px; left: 3px; width: 11px; height: 11px; border-radius: 50%; content: ""; background: #777c84; transition: transform .18s ease, background .18s ease; }
-.switch input:checked + span { border-color: rgba(113,112,255,.5); background: rgba(113,112,255,.3); }
-.switch input:checked + span::after { transform: translateX(15px); background: #b5b5ff; }
 .panel-spacer { flex: 1; min-height: 18px; }
 .secondary-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; padding: 0 16px 15px; }
 .secondary-button { min-height: 37px; padding: 7px; font-size: 9px; }
@@ -342,11 +348,8 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 :root[data-theme="light"] .field-icon,
 :root[data-theme="light"] .range-row { color: #858c97; }
 :root[data-theme="light"] .field-label,
-:root[data-theme="light"] .section-label,
-:root[data-theme="light"] .toggle-row strong { color: #484e59; }
+:root[data-theme="light"] .section-label { color: #484e59; }
 :root[data-theme="light"] .select-wrap select { color: #424852; }
-:root[data-theme="light"] .switch span { background: #e1e3e8; }
-:root[data-theme="light"] .switch span::after { background: #969da8; }
 :root[data-theme="light"] .panel-footer,
 :root[data-theme="light"] .provenance,
 :root[data-theme="light"] .language-tag,
@@ -361,16 +364,23 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 }
 :root[data-theme="light"] .caption-col.en { color: #5f6671; }
 :root[data-theme="light"] .caption-col .ko { color: #20232a; }
-:root[data-theme="light"] .caption-col .ko.provisional { color: #767aa0; }
 :root[data-theme="light"] .orbit-ring { border-color: rgba(94,106,210,.15); }
 :root[data-theme="light"] .ring-two { border-color: rgba(94,106,210,.27); }
 :root[data-theme="light"] .panel-kicker,
 :root[data-theme="light"] .eyebrow { color: #8a919c; }
 :root[data-theme="light"] .error-banner { color: #9c3040; background: rgba(210,55,75,.07); }
+:root[data-theme="light"] .caption-col .ko.error-marker,
+:root[data-theme="light"] .provenance.error-text { color: #9c3040; }
+:root[data-theme="light"] .error-mark { background: rgba(210,55,75,.1); color: #9c3040; }
 
 @keyframes wave { 0%, 100% { transform: scaleY(.6); opacity: .5; } 50% { transform: scaleY(1); opacity: 1; } }
 @keyframes breathe { 0%, 100% { opacity: .7; } 50% { opacity: 1; } }
 @keyframes captionIn { from { transform: translateY(10px) scale(.985); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
+@keyframes loaderPulse { 0%, 80%, 100% { opacity: .28; transform: scale(.8); } 40% { opacity: .9; transform: scale(1); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .phrase-loader-dots i { animation: none; opacity: .55; }
+}
 
 @media (max-width: 1040px) {
   .app-shell { padding: 30px 24px; }

@@ -24,11 +24,21 @@ def test_defaults_match_the_design():
     assert s.xai_base_url == "https://api.x.ai/v1"
     assert s.default_provider == "anthropic"
     assert s.deepgram_model == "nova-3"
-    assert s.translate_interims is True
+    assert s.translate_interims is False
     assert s.debounce_ms == 400
     assert s.context_pairs == 3
     assert s.sample_rate == 16000
     assert s.korean_register == "합니다체"
+
+
+def test_translate_interims_defaults_to_false():
+    # The frontend now only reveals a row once its phrase is terminal, so a
+    # translated interim's "provisional" caption is never rendered in the
+    # main view — translating interims by default would just be wasted API
+    # calls. This pins the default explicitly (test_defaults_match_the_design
+    # already covers it, but the design's live-caption-reveal change hinges
+    # on this one flag, so it gets its own regression test).
+    assert make().translate_interims is False
 
 
 def test_env_overrides_defaults(monkeypatch):

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Phrase } from "../hooks/useCaptionSocket";
+import { hasInFlightPhrase, visiblePhrases } from "../phraseDisplay";
 import { labelFor, type ProviderInfo } from "../providers";
 
 interface Props {
@@ -11,6 +12,15 @@ interface Props {
 export function TranscriptView({ phrases, fontSize, providers }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
+
+  // A row only ever renders once its phrase is terminal (final or failed —
+  // see phraseDisplay.ts); everything before that is represented by the
+  // loader below, never by changing text. `phrases` (unfiltered) still
+  // drives both the loader's presence and the auto-scroll effect, so the
+  // transcript keeps tracking live even while nothing new has become
+  // visible yet.
+  const visible = visiblePhrases(phrases);
+  const inFlight = hasInFlightPhrase(phrases);
 
   useEffect(() => {
     if (pinned && scrollRef.current) {
@@ -65,36 +75,62 @@ export function TranscriptView({ phrases, fontSize, providers }: Props) {
               </div>
             </div>
           ) : (
-            phrases.map((phrase, index) => (
-              <article
-                className={`transcript-row ${
-                  index === phrases.length - 1 ? "is-current" : ""
-                }`}
-                key={phrase.phraseId}
-              >
-                <div className="phrase-number">
-                  {String(phrase.phraseId + 1).padStart(2, "0")}
-                </div>
-                <div className="caption-col en">
-                  <p>{phrase.en}</p>
-                  <span className="language-tag">EN</span>
-                </div>
-                <div className="caption-col ko-cell">
-                  <p className={phrase.status !== "final" ? "ko provisional" : "ko"}>
-                    {phrase.ko ?? "번역을 기다리는 중…"}
-                  </p>
-                  <div className="caption-meta">
-                    <span className="language-tag ko-tag">KO</span>
-                    {phrase.provider && (
-                      <span className="provenance">
-                        {labelFor(providers, phrase.provider)}
-                        {phrase.latencyMs !== null && ` · ${phrase.latencyMs}ms`}
-                      </span>
+            <>
+              {visible.map((phrase, index) => (
+                <article
+                  className={`transcript-row ${
+                    index === visible.length - 1 ? "is-current" : ""
+                  } ${phrase.status === "error" ? "is-error" : ""}`}
+                  key={phrase.phraseId}
+                >
+                  <div className="phrase-number">
+                    {String(phrase.phraseId + 1).padStart(2, "0")}
+                  </div>
+                  <div className="caption-col en">
+                    <p>{phrase.en}</p>
+                    <span className="language-tag">EN</span>
+                  </div>
+                  <div className="caption-col ko-cell">
+                    {phrase.status === "error" ? (
+                      <>
+                        <p className="ko error-marker">
+                          <span className="error-mark" aria-hidden="true">!</span>
+                          Translation unavailable
+                        </p>
+                        <div className="caption-meta">
+                          <span className="language-tag ko-tag">KO</span>
+                          <span className="provenance error-text">
+                            {phrase.errorMessage ?? "translation failed"}
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <p className="ko">{phrase.ko}</p>
+                        <div className="caption-meta">
+                          <span className="language-tag ko-tag">KO</span>
+                          {phrase.provider && (
+                            <span className="provenance">
+                              {labelFor(providers, phrase.provider)}
+                              {phrase.latencyMs !== null &&
+                                ` · ${phrase.latencyMs}ms`}
+                            </span>
+                          )}
+                        </div>
+                      </>
                     )}
                   </div>
+                </article>
+              ))}
+              {inFlight && (
+                <div className="phrase-loader" role="status" aria-live="polite">
+                  <span className="phrase-loader-dots" aria-hidden="true">
+                    <i /><i /><i />
+                  </span>
+                  Listening…
                 </div>
-              </article>
-            ))
+              )}
+            </>
           )}
         </div>
         {!pinned && (

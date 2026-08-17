@@ -17,6 +17,16 @@ def make_settings(**overrides) -> Settings:
     base = dict(
         deepgram_api_key="d", anthropic_api_key="a", groq_api_key="g", xai_api_key="x"
     )
+    # translate_interims defaults to False on Settings itself now (the
+    # frontend never renders a provisional caption, so translating interims
+    # by default would just waste API calls) — but most of this file's
+    # tests exist specifically to exercise the interim-translation
+    # machinery (debounce, in-flight guard, sequence guard), which is still
+    # correct and still re-enabled via TRANSLATE_INTERIMS/the config
+    # message. Pin it on here so those tests keep covering that code
+    # without every call site needing its own override; tests of the
+    # interims-off behavior still pass translate_interims=False explicitly.
+    base["translate_interims"] = True
     base.update(overrides)
     # _env_file=None keeps the suite hermetic: Settings now resolves a real
     # repo-root .env, and a developer's local one must not change defaults.
