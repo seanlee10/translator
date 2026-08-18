@@ -180,6 +180,38 @@ def test_the_phrase_span_still_carries_the_audio_transcript_attribute():
     assert tracing._INPUT_AUDIO_TRANSCRIPT.endswith(AudioAttributes.AUDIO_TRANSCRIPT)
 
 
+def test_a_successful_phrase_span_is_marked_OK_not_left_unset():
+    """UNSET is not success.
+
+    An OTel span starts UNSET and stays there unless something says
+    otherwise. Recording ERROR on the failure path only is a trap: every
+    successful phrase then looks identical to one that never resolved, and
+    filtering by status in Arize returns nothing useful.
+    """
+    from opentelemetry.trace import StatusCode
+
+    recorded = {}
+
+    class FakeSpan:
+        def set_attribute(self, key, value):
+            recorded[key] = value
+
+        def set_status(self, status):
+            recorded["__status__"] = status
+
+        def record_exception(self, exc):
+            recorded["__exc__"] = exc
+
+    span = tracing._PhraseSpan(FakeSpan())
+    span.set_translation("안녕하세요", "xai", 42)
+
+    assert recorded["__status__"].status_code is StatusCode.OK
+
+    failed = tracing._PhraseSpan(FakeSpan())
+    failed.set_error(RuntimeError("boom"))
+    assert recorded["__status__"].status_code is StatusCode.ERROR
+
+
 # ---- the null span honours the same interface ----
 
 

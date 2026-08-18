@@ -134,6 +134,11 @@ class _PhraseSpan:
         self._span.set_attribute(_OUTPUT_VALUE, ko)
         self._span.set_attribute("translation.provider", provider)
         self._span.set_attribute("translation.latency_ms", latency_ms)
+        # Success has to be stated. An OTel span defaults to UNSET, not OK,
+        # so a span that only ever gets ERROR on the failure path leaves
+        # every successful phrase indistinguishable from one that was never
+        # resolved — which makes "filter to failures" useless in Arize.
+        self._span.set_status(Status(StatusCode.OK))
 
     def set_error(self, exc: BaseException) -> None:
         # A failed translation is a failed phrase, but never a failed session:

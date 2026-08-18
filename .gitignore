@@ -11,3 +11,8 @@ docs/
 
 # Global gitignore excludes CLAUDE.md; this repo tracks it.
 !CLAUDE.md
+
+# Benchmark run outputs. Regenerable, and deliberately not published: a run's
+# phrases.json is a full verbatim transcript of whatever audio was measured,
+# which is somebody else's copyrighted material in every interesting case.
+backend/benchmarks/

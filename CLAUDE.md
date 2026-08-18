@@ -114,6 +114,19 @@ Additive and optional. `setup_tracing()` returns `False` and logs — never rais
 - **The space id is instance-scoped.** `app.arize.com` (US, collector `otlp.arize.com`) and `app.eu-west-1a.arize.com` (EU) have disjoint space id ranges. Credentials from one instance pointed at the other's collector drop every span with no error. `ARIZE_ENDPOINT` stays blank to mean "arize-otel's default", which is US. `ax spaces list` defaults to `--limit 15`, so a missing space there is not evidence the space does not exist.
 - `backend/scripts/verify_arize.py` is a manual script — real keys, real network, one real translation call. It drives the production path end to end (only Deepgram is faked, by constructing a `TranscriptEvent`) and calls `shutdown_tracing()` before exit, without which the batch exporter never flushes and nothing arrives.
 
+### Benchmarking the three models (`scripts/benchmark_*.py`)
+
+`benchmark_translation.py` runs an audio file through the real Deepgram adapter once, replays the resulting phrases past every configured provider, scores them blind, and writes `results.json`. `benchmark_dashboard.py` renders that into a self-contained HTML page. Both are manual — real keys, real network, real spend — and neither is in the suite. Outputs land in `backend/benchmarks/`, which is git-ignored: a run's `phrases.json` is a verbatim transcript of whatever was measured, and this repo is public.
+
+Four things in there are load-bearing and were each learned the hard way:
+
+- **Transcribe once, translate many.** Per-provider transcription would measure Deepgram's run-to-run variance as much as the models. The phrase list is cached so later stages re-run free.
+- **Push audio at 1x, never faster.** Endpointing is supposed to key off audio timestamps, so faster-than-real-time looks free. It is not: on one 2-minute excerpt, phrases recovered were 19 (1x), 11 (2x), 5 (4x), **0 (8x)**. A run costs one wall-clock minute per audio minute.
+- **Replay phrases on their spoken timeline.** Firing them back to back is ~20x the live request rate and trips provider rate limits. One run had a provider steady at 255 ms for the first half, then 2406 ms for the second, never recovering — it looked like the slowest model when it was in fact the fastest. `benchmark_dashboard.py` compares the two halves of a run and flags that step rather than silently correcting the number.
+- **Judge from outside the compared set.** `OPENAI_API_KEY` exists only for this and is deliberately absent from `PROVIDER_REGISTRY`; anthropic, groq and xai each score their own vendor's output, which shuffled A/B/C labels do not fix. Cross-checked on identical translations: Opus 5, Grok 4.20 and GPT-5.5 landed within 0.07 of each other on every model and produced the same ranking, with 80% per-phrase agreement between the two independent judges.
+
+Uploading judge scores to Arize needs annotation configs created first, and the span-id filter must come from `ax spans export --all` — plain export caps at 100 rows and makes a complete upload look 96% missing. `arize_annotations()` in the script carries the exact commands.
+
 ### Frontend
 
 - **Captions are keyed by `phrase_id` and replaced in place**, rendered in ascending `phrase_id` order — never arrival order. A `transcript` event must not blank Korean already present for that phrase (English updates faster; blanking flickers).

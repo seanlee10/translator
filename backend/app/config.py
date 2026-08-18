@@ -72,6 +72,15 @@ class Settings(BaseSettings):
     debounce_ms: int = 400
     context_pairs: int = 3
 
+    # Evaluation only — never a translation provider.
+    # OpenAI is deliberately absent from PROVIDER_REGISTRY: the app compares
+    # three models and this key exists so the benchmark can be scored by a
+    # judge from outside that set. A judge drawn from the compared models
+    # either scores its own output or its own vendor's, and neither can be
+    # read as an impartial ranking.
+    openai_api_key: str = ""
+    openai_judge_model: str = "gpt-5.5"
+
     # Observability (Arize AX)
     # All optional. Tracing turns itself on only when BOTH the space id and
     # the api key are non-empty — see app/tracing.py. An unset pair is the
