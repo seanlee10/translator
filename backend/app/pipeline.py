@@ -2,8 +2,9 @@ import asyncio
 import logging
 import time
 from collections import deque
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Sequence
+from typing import Awaitable, Callable, ContextManager, Iterator, Protocol, Sequence
 
 from pydantic import BaseModel
 
@@ -23,6 +24,43 @@ Translate = Callable[[str, Sequence[ContextPair]], Awaitable[TranslationResult]]
 Emit = Callable[[BaseModel], Awaitable[None]]
 
 FINAL_RETRY_DELAY_S = 0.25
+
+
+class PhraseSpan(Protocol):
+    """What a tracing backend hands back for one phrase.
+
+    Deliberately tiny: the pipeline reports two facts about a phrase and
+    knows nothing about spans, exporters, or attribute names.
+    """
+
+    def set_translation(self, ko: str, provider: str, latency_ms: int) -> None: ...
+
+    def set_error(self, exc: BaseException) -> None: ...
+
+
+class _NullPhraseSpan:
+    def set_translation(self, ko: str, provider: str, latency_ms: int) -> None:
+        pass
+
+    def set_error(self, exc: BaseException) -> None:
+        pass
+
+
+@contextmanager
+def null_trace_phrase(
+    phrase_id: int, text: str, speech_ms: int
+) -> Iterator[PhraseSpan]:
+    """The default. Tracing is injected, never imported.
+
+    This module holds every timing and ordering decision in the system and
+    imports no I/O library, which is what makes the whole policy testable
+    offline. An OTLP exporter is exactly the kind of dependency that would
+    break that, so app/tracing.py is passed in by main.py instead.
+    """
+    yield _NullPhraseSpan()
+
+
+TracePhrase = Callable[[int, str, int], ContextManager[PhraseSpan]]
 
 
 @dataclass
@@ -46,11 +84,13 @@ class Pipeline:
         emit: Emit,
         settings: Settings,
         now: Callable[[], float] = time.monotonic,
+        trace_phrase: TracePhrase = null_trace_phrase,
     ) -> None:
         self._translate = translate
         self._emit = emit
         self._s = settings
         self._now = now
+        self._trace_phrase = trace_phrase
         self._translate_interims = settings.translate_interims
 
         self._phrases: dict[int, PhraseState] = {}
@@ -101,28 +141,44 @@ class Pipeline:
         while True:
             phrase_id, text = await self._final_queue.get()
             try:
-                try:
-                    result = await self._translate_final(text)
-                except Exception as exc:  # noqa: BLE001 - shown in the UI, never fatal
-                    await self._emit(
-                        ErrorOut(
-                            phrase_id=phrase_id,
-                            message=f"translation failed: {exc}",
-                        )
-                    )
-                else:
-                    self._context.append(ContextPair(en=text, ko=result.ko))
-                    async with self._emit_lock:
+                # First interim to final: how long this phrase took to say.
+                state = self._phrases.get(phrase_id)
+                speech_ms = (
+                    int((self._now() - state.created_at) * 1000)
+                    if state is not None
+                    else 0
+                )
+                # The translation is awaited inside this block so the
+                # provider SDK's own span nests under the phrase.
+                with self._trace_phrase(phrase_id, text, speech_ms) as span:
+                    try:
+                        result = await self._translate_final(text)
+                    except (
+                        Exception
+                    ) as exc:  # noqa: BLE001 - shown in the UI, never fatal
+                        span.set_error(exc)
                         await self._emit(
-                            CaptionOut(
+                            ErrorOut(
                                 phrase_id=phrase_id,
-                                en=text,
-                                ko=result.ko,
-                                status="final",
-                                provider=result.provider,
-                                latency_ms=result.latency_ms,
+                                message=f"translation failed: {exc}",
                             )
                         )
+                    else:
+                        span.set_translation(
+                            result.ko, result.provider, result.latency_ms
+                        )
+                        self._context.append(ContextPair(en=text, ko=result.ko))
+                        async with self._emit_lock:
+                            await self._emit(
+                                CaptionOut(
+                                    phrase_id=phrase_id,
+                                    en=text,
+                                    ko=result.ko,
+                                    status="final",
+                                    provider=result.provider,
+                                    latency_ms=result.latency_ms,
+                                )
+                            )
             except Exception:  # noqa: BLE001 - a broken emit must not kill the worker
                 logger.exception(
                     "final worker: unhandled error for phrase %s", phrase_id

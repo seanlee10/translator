@@ -15,6 +15,13 @@ dependencies = [
     "openai>=1.50",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
+    # Arize AX tracing. Required imports, optional behaviour: app/tracing.py
+    # stays a no-op unless ARIZE_SPACE_ID and ARIZE_API_KEY are both set, so
+    # the suite and a keyless server never touch an exporter.
+    "arize-otel>=0.13",
+    "openinference-instrumentation-anthropic>=1.1",
+    "openinference-instrumentation-groq>=0.1.20",
+    "openinference-instrumentation-openai>=0.1.54",
 ]
 
 [project.optional-dependencies]

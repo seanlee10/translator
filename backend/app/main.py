@@ -12,11 +12,27 @@ from app.deepgram_client import DeepgramSource
 from app.models import ErrorOut, ProviderInfo, StatusOut
 from app.pipeline import Pipeline
 from app.providers import build_providers, configured_providers
+from app.tracing import phrase_span, setup_tracing, shutdown_tracing
 from app.translator import TranslatorRouter
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Live Caption Translator")
+
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Tracing is configured once, before any provider client exists, because
+    # the SDK instrumentors patch those clients — and clients are built
+    # per-session in _default_router_factory. Wrapped because observability
+    # failing is never a reason for the server not to transcribe.
+    try:
+        setup_tracing(_settings())
+    except Exception:  # noqa: BLE001 - never block startup
+        logger.exception("tracing setup failed; continuing without tracing")
+    yield
+    shutdown_tracing()
+
+
+app = FastAPI(title="Live Caption Translator", lifespan=lifespan)
 
 # How long teardown waits for queued final translations before giving up.
 DRAIN_TIMEOUT_S = 2.0
@@ -177,7 +193,11 @@ async def session(ws: WebSocket) -> None:
 
                     router = app.state.router_factory(settings)
                     pipeline = Pipeline(
-                        translate=router.translate, emit=emit, settings=settings
+                        translate=router.translate,
+                        emit=emit,
+                        settings=settings,
+                        # A no-op unless setup_tracing() actually came up.
+                        trace_phrase=phrase_span,
                     )
                     await pipeline.start()
                     pump = asyncio.create_task(_pump(source, pipeline, emit))

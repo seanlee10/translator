@@ -96,6 +96,24 @@ Three API constraints that will produce confusing failures if "cleaned up":
 - `sample_rate` comes from the **browser per session**, not from `settings`. Browsers do not reliably honor a requested `AudioContext` rate, so the real one is sent in the `start` message and used to configure Deepgram. `settings.sample_rate` is only what the browser is *asked* for.
 - `backend/scripts/verify_deepgram.py` is a manual script needing a real key and network. It is not part of the suite; run it by hand when touching the SDK adapter.
 
+### Arize AX tracing (`app/tracing.py`)
+
+Additive and optional. `setup_tracing()` returns `False` and logs — never raises — unless **both** `ARIZE_SPACE_ID` and `ARIZE_API_KEY` are non-empty after stripping. A server with neither behaves exactly as it did before: no exporter, no network, no cost.
+
+- **`pipeline.py` still imports no I/O library**, and that is not incidental. Tracing is *injected* as a `trace_phrase` context manager alongside the existing `translate`/`emit`/`now` seams, defaulting to `null_trace_phrase` (pure `contextlib`). An OTLP exporter imported into the policy module is exactly the dependency that would end its offline testability. Do not "simplify" this by importing `app.tracing` from `pipeline.py`.
+- **One span tree per finalized phrase**, opened in the finals worker so the provider SDK's own LLM span nests inside it (the translation is awaited inside the `with`, same task, so the OTel context propagates):
+
+  ```
+  phrase          [CHAIN]  input=EN, output=KO, phrase.id, phrase.speech_ms
+  ├─ transcription [CHAIN]  input.audio.transcript=EN
+  └─ messages.create [LLM]  ← the instrumentor's, with tokens and cost
+  ```
+
+- **The transcription span is a `CHAIN`, not an `AUDIO`, and that is a platform limit rather than a preference.** Arize's voice docs describe an `AUDIO` span kind; it is not in `OpenInferenceSpanKindValues` (semconv 0.1.32), and worse, Arize's *read* API rejects the value. Spans written with `openinference.span.kind="AUDIO"` ingest silently and then make every later `ax traces export` **and** unfiltered `ax spans export` over that project fail with `422 Validation Error; kind: Input should be 'LLM', 'CHAIN', ...`. One unreadable span poisons trace export for the whole project, and nothing at write time warns you. `SUPPORTED_SPAN_KINDS` plus a test pins this. **Consequence: there is no voice-agent span surface here.** The app also emits no audio and retains no input audio, so `output.audio.*`, `input.audio.url`, and time-to-first-token cannot exist on any path — `phrase.speech_ms` (first interim → final) is the only honest duration available.
+- **All three SDK instrumentors are attached regardless of which keys are configured.** Patching a library nobody calls costs nothing; tying this to `configured_providers()` would mean a provider enabled later silently loses its LLM spans.
+- **The space id is instance-scoped.** `app.arize.com` (US, collector `otlp.arize.com`) and `app.eu-west-1a.arize.com` (EU) have disjoint space id ranges. Credentials from one instance pointed at the other's collector drop every span with no error. `ARIZE_ENDPOINT` stays blank to mean "arize-otel's default", which is US. `ax spaces list` defaults to `--limit 15`, so a missing space there is not evidence the space does not exist.
+- `backend/scripts/verify_arize.py` is a manual script — real keys, real network, one real translation call. It drives the production path end to end (only Deepgram is faked, by constructing a `TranscriptEvent`) and calls `shutdown_tracing()` before exit, without which the batch exporter never flushes and nothing arrives.
+
 ### Frontend
 
 - **Captions are keyed by `phrase_id` and replaced in place**, rendered in ascending `phrase_id` order — never arrival order. A `transcript` event must not blank Korean already present for that phrase (English updates faster; blanking flickers).

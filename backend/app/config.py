@@ -72,6 +72,21 @@ class Settings(BaseSettings):
     debounce_ms: int = 400
     context_pairs: int = 3
 
+    # Observability (Arize AX)
+    # All optional. Tracing turns itself on only when BOTH the space id and
+    # the api key are non-empty — see app/tracing.py. An unset pair is the
+    # normal case for tests and for anyone who does not want traces, and it
+    # must never make the server fail to start.
+    #
+    # The space id is instance-scoped: a space that lives on app.arize.com
+    # (the US instance, whose OTLP collector is otlp.arize.com) does not
+    # exist on the EU instance and vice versa. arize_endpoint stays empty to
+    # mean "use arize-otel's default", which is the US collector.
+    arize_space_id: str = ""
+    arize_api_key: str = ""
+    arize_project_name: str = "live-caption-translator"
+    arize_endpoint: str = ""
+
     # Transcription
     deepgram_model: str = "nova-3"
     sample_rate: int = 16000
