@@ -58,13 +58,13 @@ export function OverlayView() {
               key={phrase.phraseId}
             >
               <p
-                className="overlay-en"
+                className="overlay-source"
                 style={{ fontSize: `${Math.max(20, snapshot.fontSize * 0.7)}px` }}
               >
                 {sourceTextOf(phrase, direction) ?? ""}
               </p>
               <p
-                className="overlay-ko"
+                className="overlay-target"
                 style={{ fontSize: `${Math.max(32, snapshot.fontSize * 1.45)}px` }}
               >
                 {targetTextOf(phrase, direction) ?? direction.translatingPlaceholder}

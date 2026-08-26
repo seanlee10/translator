@@ -99,13 +99,13 @@ export function TranscriptView({ phrases, fontSize, providers, direction }: Prop
                   <div className="phrase-number">
                     {String(phrase.phraseId + 1).padStart(2, "0")}
                   </div>
-                  <div className={`caption-col source is-${direction.sourceLang}`}>
+                  <div className="caption-col source">
                     <p>{sourceTextOf(phrase, direction) ?? ""}</p>
                     <span className={`language-tag lang-${direction.sourceLang}`}>
                       {direction.sourceLang.toUpperCase()}
                     </span>
                   </div>
-                  <div className={`caption-col target is-${direction.targetLang}`}>
+                  <div className="caption-col target">
                     {phrase.status === "error" ? (
                       <>
                         <p className="error-marker">

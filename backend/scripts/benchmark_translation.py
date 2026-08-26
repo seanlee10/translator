@@ -258,6 +258,7 @@ async def translate_all(settings, phrases, run_id, direction, only=None,
                         sp.set_attribute("session.id", run_id)
                         sp.set_attribute("translation.provider", name)
                         sp.set_attribute("phrase.id", phrase["phrase_id"])
+                        sp.set_attribute("phrase.direction", direction.id)
                         try:
                             result = await router.translate(phrase["en"], context)
                         except Exception as exc:
@@ -294,6 +295,7 @@ async def translate_all(settings, phrases, run_id, direction, only=None,
                 ps.set_attribute("input.audio.transcript", phrase["en"])
                 ps.set_attribute("session.id", run_id)
                 ps.set_attribute("phrase.id", phrase["phrase_id"])
+                ps.set_attribute("phrase.direction", direction.id)
                 done = await asyncio.gather(*(one(n) for n in names))
                 failed = [n for n, r in done if r["error"]]
                 if failed:
@@ -306,9 +308,13 @@ async def translate_all(settings, phrases, run_id, direction, only=None,
         for name, payload in done:
             row["translations"][name] = payload
             if payload["ko"]:
-                contexts[name].append(
-                    ContextPair(en=phrase["en"], ko=payload["ko"])
-                )
+                en, ko = direction.to_slots(phrase["en"], payload["ko"])
+                # to_slots returns Optionals for the transcript case; here
+                # both sides exist by construction (we are inside the
+                # `if payload["ko"]:` guard). Narrow at this one site rather
+                # than loosening ContextPair, matching app/pipeline.py.
+                assert en is not None and ko is not None
+                contexts[name].append(ContextPair(en=en, ko=ko))
         rows.append(row)
         if (index + 1) % 20 == 0:
             logger.info("  translated %d/%d phrases", index + 1, len(phrases))

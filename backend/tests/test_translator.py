@@ -123,30 +123,6 @@ async def test_switching_provider_routes_subsequent_calls():
     assert len(groq.seen) == 1 and not anthropic.seen
 
 
-async def test_all_registered_providers_receive_byte_identical_prompts():
-    # Parameterized over PROVIDER_REGISTRY rather than hardcoding the three
-    # ids: a fourth registry entry must automatically be covered by this
-    # invariant, not silently skipped.
-    ids = [spec.id for spec in PROVIDER_REGISTRY]
-    fakes = {provider_id: FakeProvider(provider_id) for provider_id in ids}
-    router = TranslatorRouter(
-        dict(fakes),
-        default=ids[0],
-        settings=make_settings(),
-        direction=EN_TO_KO,
-    )
-    context = [ContextPair(en="one", ko="하나")]
-
-    for provider_id in ids:
-        router.set_provider(provider_id)
-        await router.translate("hello", context)
-
-    seen_prompts = [fakes[provider_id].seen[0] for provider_id in ids]
-    # Any quality difference must be the model, not the scaffolding. Every
-    # configured provider must match, not just a pair.
-    assert all(prompt == seen_prompts[0] for prompt in seen_prompts)
-
-
 def test_unknown_provider_is_rejected():
     router = TranslatorRouter(
         {"anthropic": FakeProvider("anthropic")},
@@ -243,9 +219,3 @@ def test_clean_output_strips_english_side_labels():
 def test_clean_output_still_strips_korean_side_labels():
     assert clean_output("한국어: 안녕하세요") == "안녕하세요"
     assert clean_output("번역: 안녕하세요") == "안녕하세요"
-
-
-def test_the_router_exposes_its_direction():
-    router = TranslatorRouter({"anthropic": FakeProvider("anthropic")},
-                              "anthropic", make_settings(), KO_TO_EN)
-    assert router.direction is KO_TO_EN

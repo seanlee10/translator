@@ -125,14 +125,15 @@ class Pipeline:
         await self._emit(TranscriptOut(phrase_id=event.phrase_id, en=en, ko=ko))
 
         if event.is_final:
-            # The English is published for finals too, *before* the
-            # translation is enqueued. Otherwise a finalized phrase reaches
-            # the browser only inside a successful CaptionOut, and a failed
-            # translation leaves no row at all — just a global error banner.
-            # The spec requires the phrase be published with its English and
-            # an error marker. The client's rank guard treats this as an
-            # interim, so it refines the English of an already-displayed
-            # provisional without regressing its status or blanking Korean.
+            # The source-language text is published for finals too, *before*
+            # the translation is enqueued. Otherwise a finalized phrase
+            # reaches the browser only inside a successful CaptionOut, and a
+            # failed translation leaves no row at all — just a global error
+            # banner. The spec requires the phrase be published with its
+            # source text and an error marker. The client's rank guard
+            # treats this as an interim, so it refines the source-language
+            # text of an already-displayed provisional without regressing
+            # its status or blanking the translation.
             state.closed = True
             await self._final_queue.put((event.phrase_id, event.text))
             return

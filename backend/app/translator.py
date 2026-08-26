@@ -149,10 +149,6 @@ class TranslatorRouter:
             self.set_provider(default)
 
     @property
-    def direction(self) -> Direction:
-        return self._direction
-
-    @property
     def current_provider(self) -> ProviderName | None:
         return self._current
 

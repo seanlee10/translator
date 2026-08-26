@@ -1,9 +1,9 @@
 import {
   DIRECTIONS,
-  directionById,
   sourceTextOf,
   targetTextOf,
   type DirectionId,
+  type DirectionInfo,
 } from "../directions";
 import type { Phrase, Status } from "../hooks/useCaptionSocket";
 import type { ProviderInfo } from "../providers";
@@ -26,11 +26,17 @@ interface Props {
   onOpenOverlay: () => void;
   direction: DirectionId;
   onDirection: (id: DirectionId) => void;
+  // The direction the ON-SCREEN transcript is actually being read under
+  // (App.tsx's shownDirection) — NOT necessarily `direction` above, which
+  // is the pending toggle selection. While stopped with a previous
+  // session's phrases still visible, flipping the toggle must not reverse
+  // the source/target line order in the export relative to what's shown.
+  exportDirection: DirectionInfo;
 }
 
 export function Controls(props: Props) {
   const exportTranscript = () => {
-    const direction = directionById(props.direction);
+    const direction = props.exportDirection;
     const body = props.phrases
       .map((p) => {
         const tag = p.provider

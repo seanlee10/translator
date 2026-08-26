@@ -268,6 +268,7 @@ function ControlCenter() {
           onOpenOverlay={openOverlay}
           direction={direction}
           onDirection={setDirection}
+          exportDirection={shownDirection}
         />
       </div>
     </main>

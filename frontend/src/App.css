@@ -228,9 +228,9 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .language-tag.lang-ko { color: #6f70aa; }
 .caption-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .provenance { margin-top: 11px; color: #555a62; font-size: 9px; font-variant-numeric: tabular-nums; }
-/* A row's translation failed: English still shown (see phraseDisplay.ts —
-   this is the terminal-but-not-final case), Korean replaced by a clear,
-   quiet marker rather than left blank or silently dropped. */
+/* A row's translation failed: source text still shown (see phraseDisplay.ts —
+   this is the terminal-but-not-final case), the translation replaced by a
+   clear, quiet marker rather than left blank or silently dropped. */
 .caption-col.target p.error-marker { display: flex; align-items: center; gap: 7px; color: var(--danger); font-weight: 510; font-style: normal; }
 .error-mark { display: inline-grid; flex: 0 0 auto; place-items: center; width: 15px; height: 15px; border-radius: 50%; background: rgba(255,107,122,.16); color: var(--danger); font-size: 10px; font-weight: 700; }
 .provenance.error-text { color: var(--danger); opacity: .85; }
@@ -298,10 +298,10 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .overlay-ready { display: flex; align-items: center; gap: 9px; padding: 9px 13px; border: 1px solid rgba(255,255,255,.12); border-radius: 999px; color: rgba(255,255,255,.58); background: rgba(9,10,12,.7); box-shadow: 0 8px 30px rgba(0,0,0,.3); backdrop-filter: blur(18px); font-size: 12px; }
 .overlay-caption { width: 100%; padding: 15px 28px 17px; border: 1px solid rgba(255,255,255,.12); border-radius: 16px; color: white; text-align: center; background: linear-gradient(180deg, rgba(12,13,16,.77), rgba(5,6,8,.84)); box-shadow: 0 18px 60px rgba(0,0,0,.36), inset 0 1px rgba(255,255,255,.05); backdrop-filter: blur(22px) saturate(130%); animation: captionIn .22s ease-out both; }
 .overlay-caption:not(.is-current) { transform: scale(.97); opacity: .58; }
-.overlay-caption.is-provisional .overlay-ko { opacity: .72; font-style: italic; }
-.overlay-en, .overlay-ko { margin: 0; text-wrap: balance; text-shadow: 0 2px 10px rgba(0,0,0,.55); }
-.overlay-en { margin-bottom: 4px; color: rgba(240,243,248,.72); font-weight: 400; line-height: 1.35; }
-.overlay-ko { color: #fff; font-weight: 590; line-height: 1.3; letter-spacing: -.025em; }
+.overlay-caption.is-provisional .overlay-target { opacity: .72; font-style: italic; }
+.overlay-source, .overlay-target { margin: 0; text-wrap: balance; text-shadow: 0 2px 10px rgba(0,0,0,.55); }
+.overlay-source { margin-bottom: 4px; color: rgba(240,243,248,.72); font-weight: 400; line-height: 1.35; }
+.overlay-target { color: #fff; font-weight: 590; line-height: 1.3; letter-spacing: -.025em; }
 
 :root[data-theme="light"] {
   --bg: #f3f4f7;

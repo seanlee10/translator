@@ -281,7 +281,7 @@ async def run_with_clock(items, settings=None, translator=None, direction=EN_TO_
     return recorder, translator
 
 
-async def test_english_interims_publish_without_any_translation_call():
+async def test_source_language_interims_publish_without_any_translation_call():
     recorder, translator = await run_with_clock(
         [TranscriptEvent(phrase_id=0, text="hel", is_final=False)],
         settings=make_settings(translate_interims=False),
@@ -314,6 +314,34 @@ async def test_interim_is_translated_once_the_debounce_window_elapses():
             phrase_id=0,
             en="hello th",
             ko="[ko]hello th",
+            status="provisional",
+            provider="anthropic",
+            latency_ms=100,
+        )
+    ]
+
+
+async def test_ko_to_en_interim_puts_spoken_korean_and_translated_english_in_the_right_slots():
+    # _translate_interim calls to_slots too, and that call site is never
+    # exercised in the ko>en direction elsewhere in this file. Swapped
+    # arguments there would keep the suite green while showing backwards
+    # text in the presentation overlay (which renders provisionals
+    # unfiltered) with TRANSLATE_INTERIMS=true.
+    recorder, translator = await run_with_clock(
+        [
+            TranscriptEvent(phrase_id=0, text="안", is_final=False),
+            500,
+            TranscriptEvent(phrase_id=0, text="안녕하세요", is_final=False),
+        ],
+        direction=KO_TO_EN,
+    )
+
+    assert translator.calls == [("안녕하세요", [])]
+    assert recorder.captions() == [
+        CaptionOut(
+            phrase_id=0,
+            en="[ko]안녕하세요",
+            ko="안녕하세요",
             status="provisional",
             provider="anthropic",
             latency_ms=100,
