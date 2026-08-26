@@ -15,8 +15,8 @@ def test_transcript_event_is_hashable_and_frozen():
 
 
 def test_translation_result_carries_provenance():
-    result = TranslationResult(ko="안녕하세요", provider="groq", latency_ms=310)
-    assert (result.ko, result.provider, result.latency_ms) == ("안녕하세요", "groq", 310)
+    result = TranslationResult(text="안녕하세요", provider="groq", latency_ms=310)
+    assert (result.text, result.provider, result.latency_ms) == ("안녕하세요", "groq", 310)
 
 
 def test_caption_out_serializes_with_provider_and_latency():

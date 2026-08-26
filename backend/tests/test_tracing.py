@@ -276,7 +276,7 @@ async def test_a_finalized_phrase_opens_and_closes_exactly_one_span():
     emitted = []
 
     async def translate(text, context):
-        return TranslationResult(ko=f"[ko]{text}", provider="anthropic", latency_ms=7)
+        return TranslationResult(text=f"[ko]{text}", provider="anthropic", latency_ms=7)
 
     pipeline = Pipeline(
         translate=translate,
@@ -303,7 +303,7 @@ async def test_a_successful_translation_is_recorded_on_the_span():
     tracer = RecordingTracer()
 
     async def translate(text, context):
-        return TranslationResult(ko="안녕하세요", provider="groq", latency_ms=123)
+        return TranslationResult(text="안녕하세요", provider="groq", latency_ms=123)
 
     pipeline = Pipeline(
         translate=translate,
@@ -363,7 +363,7 @@ async def test_a_broken_tracer_never_kills_the_finals_worker():
     emitted = []
 
     async def translate(text, context):
-        return TranslationResult(ko=f"[ko]{text}", provider="anthropic", latency_ms=1)
+        return TranslationResult(text=f"[ko]{text}", provider="anthropic", latency_ms=1)
 
     async def emit(event):
         emitted.append(event)
@@ -394,7 +394,7 @@ async def test_speech_ms_is_measured_from_the_phrases_first_event():
     tracer = RecordingTracer()
 
     async def translate(text, context):
-        return TranslationResult(ko="x", provider="anthropic", latency_ms=1)
+        return TranslationResult(text="x", provider="anthropic", latency_ms=1)
 
     pipeline = Pipeline(
         translate=translate,

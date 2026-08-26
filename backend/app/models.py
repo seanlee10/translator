@@ -36,9 +36,15 @@ class ContextPair:
 
 @dataclass(frozen=True)
 class TranslationResult:
-    """A translation plus the provenance needed to compare providers."""
+    """A translation plus the provenance needed to compare providers.
 
-    ko: str
+    `text` is the TRANSLATED side, whichever language that is in the current
+    direction. It is deliberately not named `ko`: the pipeline maps it onto
+    the en/ko wire slots via Direction.to_slots, and a language-specific name
+    here invited exactly the confusion that mapping exists to prevent.
+    """
+
+    text: str
     provider: ProviderName
     latency_ms: int
 

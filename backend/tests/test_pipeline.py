@@ -43,7 +43,7 @@ class FakeTranslator:
     async def __call__(self, text, context):
         self.calls.append((text, [(c.en, c.ko) for c in context]))
         return TranslationResult(
-            ko=f"[ko]{text}", provider=self.provider, latency_ms=100
+            text=f"[ko]{text}", provider=self.provider, latency_ms=100
         )
 
 
@@ -121,7 +121,7 @@ async def test_final_translations_are_emitted_in_order_despite_uneven_latency():
             self.n += 1
             await asyncio.sleep(0.05 if self.n == 1 else 0)
             return TranslationResult(
-                ko=f"[ko]{text}", provider="anthropic", latency_ms=1
+                text=f"[ko]{text}", provider="anthropic", latency_ms=1
             )
 
     recorder, _ = await run(
@@ -145,7 +145,7 @@ async def test_a_failing_final_emits_an_error_retries_once_and_keeps_going():
             if text == "bad":
                 raise RuntimeError("boom")
             return TranslationResult(
-                ko=f"[ko]{text}", provider="anthropic", latency_ms=1
+                text=f"[ko]{text}", provider="anthropic", latency_ms=1
             )
 
     flaky = Flaky()
@@ -173,7 +173,7 @@ async def test_context_order_is_correct_despite_uneven_latency():
             self.calls.append((text, [(c.en, c.ko) for c in context]))
             await asyncio.sleep(0.05 if self.n == 1 else 0)
             return TranslationResult(
-                ko=f"[ko]{text}", provider="anthropic", latency_ms=1
+                text=f"[ko]{text}", provider="anthropic", latency_ms=1
             )
 
     _, translator = await run(
@@ -197,7 +197,7 @@ async def test_handle_never_blocks_on_translation():
         async def __call__(self, text, context):
             await gate.wait()
             return TranslationResult(
-                ko=f"[ko]{text}", provider="anthropic", latency_ms=1
+                text=f"[ko]{text}", provider="anthropic", latency_ms=1
             )
 
     settings = make_settings()
@@ -225,7 +225,7 @@ async def test_a_failed_phrase_does_not_enter_the_context_window():
             if text == "bad":
                 raise RuntimeError("boom")
             return TranslationResult(
-                ko=f"[ko]{text}", provider="anthropic", latency_ms=1
+                text=f"[ko]{text}", provider="anthropic", latency_ms=1
             )
 
     recorder, _ = await run(
@@ -336,7 +336,7 @@ async def test_an_in_flight_interim_suppresses_a_new_one_rather_than_queueing():
             calls.append(text)
             await gate.wait()
             return TranslationResult(
-                ko=f"[ko]{text}", provider="anthropic", latency_ms=1
+                text=f"[ko]{text}", provider="anthropic", latency_ms=1
             )
 
     recorder = Recorder()
@@ -375,7 +375,7 @@ async def test_a_late_interim_never_overwrites_a_finalized_phrase():
             if not text.endswith("!"):
                 await gate.wait()
             return TranslationResult(
-                ko=f"[ko]{text}", provider="anthropic", latency_ms=1
+                text=f"[ko]{text}", provider="anthropic", latency_ms=1
             )
 
     recorder = Recorder()
@@ -486,7 +486,7 @@ async def test_the_finals_english_is_published_before_it_is_enqueued():
     class Gated:
         async def __call__(self, text, context):
             await gate.wait()
-            return TranslationResult(ko=f"[ko]{text}", provider="anthropic", latency_ms=1)
+            return TranslationResult(text=f"[ko]{text}", provider="anthropic", latency_ms=1)
 
     recorder = Recorder()
     pipeline = Pipeline(translate=Gated(), emit=recorder, settings=make_settings())

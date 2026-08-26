@@ -165,15 +165,15 @@ class Pipeline:
                         )
                     else:
                         span.set_translation(
-                            result.ko, result.provider, result.latency_ms
+                            result.text, result.provider, result.latency_ms
                         )
-                        self._context.append(ContextPair(en=text, ko=result.ko))
+                        self._context.append(ContextPair(en=text, ko=result.text))
                         async with self._emit_lock:
                             await self._emit(
                                 CaptionOut(
                                     phrase_id=phrase_id,
                                     en=text,
-                                    ko=result.ko,
+                                    ko=result.text,
                                     status="final",
                                     provider=result.provider,
                                     latency_ms=result.latency_ms,
@@ -245,7 +245,7 @@ class Pipeline:
                 CaptionOut(
                     phrase_id=event.phrase_id,
                     en=event.text,
-                    ko=result.ko,
+                    ko=result.text,
                     status="provisional",
                     provider=result.provider,
                     latency_ms=result.latency_ms,

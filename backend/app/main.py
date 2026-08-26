@@ -75,6 +75,7 @@ def _default_router_factory(settings: Settings) -> TranslatorRouter:
         providers=providers,
         default=default,
         settings=settings,
+        direction=DIRECTIONS[settings.default_direction],
     )
 
 

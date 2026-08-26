@@ -95,7 +95,7 @@ class FakeRouter:
         self.provider = name
 
     async def translate(self, text, context):
-        return TranslationResult(ko=f"[{self.provider}]{text}", provider=self.provider, latency_ms=7)
+        return TranslationResult(text=f"[{self.provider}]{text}", provider=self.provider, latency_ms=7)
 
 
 def build_client(**settings_overrides):

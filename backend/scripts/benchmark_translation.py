@@ -193,7 +193,8 @@ async def translate_all(settings, phrases, run_id, only=None,
 
     routers = {
         name: TranslatorRouter(providers={name: providers[name]},
-                               default=name, settings=settings)
+                               default=name, settings=settings,
+                               direction=EN_TO_KO)
         for name in names
     }
     contexts = {name: deque(maxlen=settings.context_pairs) for name in names}
@@ -244,12 +245,12 @@ async def translate_all(settings, phrases, run_id, only=None,
                             sp.record_exception(exc)
                             sp.set_status(Status(StatusCode.ERROR, str(exc)))
                             raise
-                        sp.set_attribute("output.value", result.ko)
+                        sp.set_attribute("output.value", result.text)
                         sp.set_attribute("translation.latency_ms",
                                          result.latency_ms)
                         sp.set_status(Status(StatusCode.OK))
                 return name, {
-                    "ko": result.ko,
+                    "ko": result.text,
                     "latency_ms": result.latency_ms,
                     "span_id": span_id,
                     "error": None,
