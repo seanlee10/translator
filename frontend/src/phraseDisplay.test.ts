@@ -61,7 +61,7 @@ describe("isTerminalPhrase", () => {
     });
     expect(isTerminalPhrase(p)).toBe(true);
     expect(p.en).toBe("hello there");
-    expect(p.en.length).toBeGreaterThan(0);
+    expect(p.en?.length).toBeGreaterThan(0);
     expect(p.ko).toBeNull();
   });
 });
