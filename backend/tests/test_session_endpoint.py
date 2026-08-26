@@ -188,6 +188,7 @@ def test_a_scripted_utterance_produces_transcript_then_caption():
             "type": "transcript",
             "phrase_id": 0,
             "en": "hel",
+            "ko": None,
             "status": "interim",
         }
         # The final's English is published before it is enqueued for
@@ -197,6 +198,7 @@ def test_a_scripted_utterance_produces_transcript_then_caption():
             "type": "transcript",
             "phrase_id": 0,
             "en": "hello there",
+            "ko": None,
             "status": "interim",
         }
         assert ws.receive_json() == {
@@ -308,6 +310,7 @@ def test_the_translate_interims_toggle_actually_changes_behavior():
             "type": "transcript",
             "phrase_id": 0,
             "en": "hel",
+            "ko": None,
             "status": "interim",
         }
 
@@ -504,6 +507,7 @@ def test_translate_interims_false_as_a_json_string_is_not_truthy():
             "type": "transcript",
             "phrase_id": 0,
             "en": "hel",
+            "ko": None,
             "status": "interim",
         }
 
