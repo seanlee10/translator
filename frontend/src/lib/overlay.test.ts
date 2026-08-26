@@ -42,6 +42,7 @@ describe("createOverlaySnapshot", () => {
       [phrase(1), phrase(2), phrase(3)],
       "listening",
       28,
+      "en>ko",
     );
 
     expect(snapshot).toEqual({
@@ -49,6 +50,7 @@ describe("createOverlaySnapshot", () => {
       phrases: [phrase(2), phrase(3)],
       status: "listening",
       fontSize: 28,
+      direction: "en>ko",
     });
   });
 
@@ -63,8 +65,21 @@ describe("createOverlaySnapshot", () => {
       }],
       "listening",
       32,
+      "ko>en",
     );
     expect(snapshot.phrases).toHaveLength(1);
     expect(targetTextOf(snapshot.phrases[0], directionById("ko>en"))).toBeNull();
+  });
+
+  it("carries the direction the session actually started with, through the snapshot", () => {
+    // This is the coverage a localStorage-based bridge could not provide:
+    // direction travels atomically with the phrases it describes, in the
+    // same message, rather than over a separate channel that could go
+    // stale relative to them.
+    const koToEn = createOverlaySnapshot([phrase(1)], "listening", 28, "ko>en");
+    expect(koToEn.direction).toBe("ko>en");
+
+    const enToKo = createOverlaySnapshot([phrase(1)], "listening", 28, "en>ko");
+    expect(enToKo.direction).toBe("en>ko");
   });
 });

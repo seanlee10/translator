@@ -1,21 +1,24 @@
 import { useEffect, useState } from "react";
 import type { OverlayMessage, OverlaySnapshot } from "../lib/overlay";
 import { OVERLAY_CHANNEL } from "../lib/overlay";
-import { sourceTextOf, targetTextOf, type DirectionInfo } from "../directions";
+import { DEFAULT_DIRECTION, directionById, sourceTextOf, targetTextOf } from "../directions";
 
 const EMPTY_SNAPSHOT: OverlaySnapshot = {
   type: "snapshot",
   phrases: [],
   status: "idle",
   fontSize: 28,
+  direction: DEFAULT_DIRECTION.id,
 };
 
-interface OverlayViewProps {
-  direction: DirectionInfo;
-}
-
-export function OverlayView({ direction }: OverlayViewProps) {
+// No props: the overlay is a separate window/page load with no access to
+// the control window's React state. Direction now travels atomically with
+// the phrases it describes, inside the snapshot itself (see
+// lib/overlay.ts) — derived below via directionById, which never throws
+// and degrades quietly to the default on a malformed value.
+export function OverlayView() {
   const [snapshot, setSnapshot] = useState(EMPTY_SNAPSHOT);
+  const direction = directionById(snapshot.direction);
 
   useEffect(() => {
     document.body.classList.add("overlay-document");
