@@ -42,7 +42,7 @@ class FakeSource:
     # connect() raises — the most common first-run failure, a bad API key.
     connect_error: Exception | None = None
 
-    def __init__(self, settings, sample_rate):
+    def __init__(self, settings, sample_rate, direction):
         FakeSource.last_sample_rate = sample_rate
         self.audio_chunks: list[bytes] = []
         self._chunk_count = 0

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from app.config import Settings, get_settings
 from app.deepgram_client import DeepgramSource
+from app.direction import Direction, DIRECTIONS
 from app.models import ErrorOut, ProviderInfo, StatusOut
 from app.pipeline import Pipeline
 from app.providers import build_providers, configured_providers
@@ -43,8 +44,8 @@ TRANSCRIPTION_ENDED_MESSAGE = (
 )
 
 
-def _default_source_factory(settings: Settings, sample_rate: int):
-    return DeepgramSource(settings, sample_rate)
+def _default_source_factory(settings: Settings, sample_rate: int, direction: Direction):
+    return DeepgramSource(settings, sample_rate, direction)
 
 
 def _default_router_factory(settings: Settings) -> TranslatorRouter:
@@ -188,7 +189,8 @@ async def session(ws: WebSocket) -> None:
                     except (TypeError, ValueError) as exc:
                         await emit(ErrorOut(message=f"invalid sample_rate: {exc}"))
                         continue
-                    source = app.state.source_factory(settings, sample_rate)
+                    direction = DIRECTIONS[settings.default_direction]
+                    source = app.state.source_factory(settings, sample_rate, direction)
                     await source.connect()
 
                     router = app.state.router_factory(settings)
