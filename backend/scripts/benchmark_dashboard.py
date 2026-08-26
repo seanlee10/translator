@@ -245,6 +245,7 @@ def render(results: dict) -> str:
     # working directory. Same two directions, small local label instead.
     direction = results.get("direction", "en>ko")
     source_label = "korean" if direction == "ko>en" else "english"
+    target_label = "english" if direction == "ko>en" else "korean"
 
     flags = {n: throttle(rows, n) for n in providers}
     judged_any = any(s["judged"] for s in summary.values())
@@ -267,11 +268,11 @@ def render(results: dict) -> str:
     out.append('<div class="wrap"><header>')
     out.append("<h1>Translating a commencement address, live</h1>")
     out.append(
-        '<p class="sub">Deepgram transcribed the audio once; every model then '
-        "translated that identical phrase list into Korean, each carrying its "
-        "own rolling context exactly as it would in a live session. Quality "
-        "comes from a blind three-way comparison where the models were "
-        "relabelled A/B/C.</p>"
+        f'<p class="sub">Deepgram transcribed the audio once; every model then '
+        f"translated that identical phrase list into {esc(target_label.capitalize())}, each "
+        f"carrying its own rolling context exactly as it would in a live "
+        f"session. Quality comes from a blind three-way comparison where the "
+        f"models were relabelled A/B/C.</p>"
     )
     audio_name = Path(results.get("audio", "")).name
     minutes = results.get("minutes")

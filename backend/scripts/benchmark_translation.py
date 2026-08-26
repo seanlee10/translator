@@ -2,10 +2,10 @@
 
 Manual script — real keys, real network, real money. Not part of the suite.
 
-The measurement only means something if every provider sees the same English,
-so the audio is transcribed **once** and the resulting phrase list is reused.
-Transcribing per provider would measure Deepgram's run-to-run variation as
-much as the models.
+The measurement only means something if every provider sees the same source
+transcript, so the audio is transcribed **once** and the resulting phrase
+list is reused. Transcribing per provider would measure Deepgram's
+run-to-run variation as much as the models.
 
 Four stages, each cached in the work directory so a later stage can be redone
 without paying for the earlier ones again:
@@ -189,7 +189,7 @@ async def transcribe(settings, audio: Path, seconds: float | None, speed: float,
 
 async def translate_all(settings, phrases, run_id, direction, only=None,
                         pace: bool = True, pace_cap: float = PACE_CAP_S):
-    """Every provider sees the same English, each with its own rolling context.
+    """Every provider sees the same source text, each with its own rolling context.
 
     Per-provider context is deliberate: that is what the live app does, so a
     provider is measured with the history it would actually have had.
