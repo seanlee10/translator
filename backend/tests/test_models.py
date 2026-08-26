@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from app.models import (
     CaptionOut,
     ContextPair,
@@ -53,3 +56,41 @@ def test_error_out_defaults_to_non_fatal():
 def test_context_pair_holds_both_languages():
     pair = ContextPair(en="hello", ko="안녕하세요")
     assert pair.en == "hello" and pair.ko == "안녕하세요"
+
+
+def test_transcript_out_can_carry_english_alone():
+    event = TranscriptOut(phrase_id=0, en="hello there")
+    assert event.en == "hello there"
+    assert event.ko is None
+    assert event.status == "interim"
+
+
+def test_transcript_out_can_carry_korean_alone():
+    # In KO→EN the raw Deepgram text IS the Korean, so it must land in the
+    # `ko` slot: en/ko are LANGUAGE slots, not source/target roles.
+    event = TranscriptOut(phrase_id=0, ko="안녕하세요")
+    assert event.ko == "안녕하세요"
+    assert event.en is None
+
+
+def test_transcript_out_serializes_both_slots_so_the_client_can_tell_them_apart():
+    # The client slots by field name, so an omitted key would be
+    # indistinguishable from a null one only if we dropped it. Keep both.
+    dumped = TranscriptOut(phrase_id=3, ko="안녕").model_dump()
+    assert dumped["en"] is None
+    assert dumped["ko"] == "안녕"
+    assert dumped["type"] == "transcript"
+
+
+def test_caption_out_still_requires_both_slots():
+    # By the time a caption is emitted, both sides exist. Loosening this to
+    # match to_slots' Optional signature would erase a real guarantee just
+    # to save a narrowing at one call site.
+    with pytest.raises(ValidationError):
+        CaptionOut(
+            phrase_id=0,
+            en="hello",
+            status="final",
+            provider="anthropic",
+            latency_ms=10,
+        )

@@ -67,11 +67,23 @@ class StatusOut(BaseModel):
 
 
 class TranscriptOut(BaseModel):
-    """English only, published the instant Deepgram produces it. No API cost."""
+    """Source text only, published the instant Deepgram produces it. No API cost.
+
+    Exactly one slot is populated, chosen by Direction.to_slots: `en` always
+    holds English and `ko` always Korean, whichever was spoken. Both are
+    optional because only the source side exists at this point — the
+    translation has not been attempted yet.
+
+    This event is what guarantees a row exists with the correct SOURCE text
+    even when the translation fails, which the spec's Error Handling section
+    requires. The client ranks it as `interim`, so it refines the source
+    text without regressing status or blanking the translation.
+    """
 
     type: Literal["transcript"] = "transcript"
     phrase_id: int
-    en: str
+    en: str | None = None
+    ko: str | None = None
     status: Literal["interim"] = "interim"
 
 
