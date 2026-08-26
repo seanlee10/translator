@@ -267,6 +267,8 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .model-toggle button { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 9px; border: 1px solid var(--border); border-radius: 8px; color: #777c85; text-align: left; background: rgba(255,255,255,.018); transition: all .16s ease; }
 .model-toggle button:hover { background: var(--surface); }
 .model-toggle button.selected { border-color: rgba(113,112,255,.38); color: #e7e8ed; background: rgba(113,112,255,.09); box-shadow: inset 0 0 0 1px rgba(113,112,255,.06); }
+.model-toggle button:disabled { opacity: .45; cursor: not-allowed; }
+.model-toggle button:disabled:hover { background: rgba(255,255,255,.018); }
 .model-toggle button > span:last-child { min-width: 0; flex: 1 1 auto; }
 .model-orb { display: grid; flex: 0 0 auto; place-items: center; width: 26px; height: 26px; border-radius: 7px; font-size: 9px; font-weight: 600; }
 .anthropic-orb { color: #e9cab5; background: rgba(191,126,83,.16); }
