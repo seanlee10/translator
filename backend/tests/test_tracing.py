@@ -12,6 +12,7 @@ import pytest
 
 import app.tracing as tracing
 from app.config import Settings
+from app.direction import EN_TO_KO
 from app.models import TranscriptEvent, TranslationResult
 from app.pipeline import Pipeline, null_trace_phrase
 
@@ -217,14 +218,14 @@ def test_a_successful_phrase_span_is_marked_OK_not_left_unset():
 
 def test_phrase_span_yields_a_usable_null_span_when_tracing_is_off():
     tracing.reset_for_tests()
-    with tracing.phrase_span(0, "hello", 120) as span:
+    with tracing.phrase_span(0, "hello", 120, "en>ko") as span:
         span.set_translation("안녕", "anthropic", 42)
         span.set_error(RuntimeError("boom"))
 
 
 def test_the_pipelines_default_hook_is_the_null_one():
     """Nothing is traced unless main.py explicitly wires app/tracing.py in."""
-    with null_trace_phrase(0, "hello", 120) as span:
+    with null_trace_phrase(0, "hello", 120, "en>ko") as span:
         span.set_translation("안녕", "anthropic", 42)
         span.set_error(RuntimeError("boom"))
 
@@ -248,13 +249,13 @@ class RecordingTracer:
     """Stands in for app/tracing.py's phrase_span."""
 
     def __init__(self):
-        self.calls: list[tuple[int, str, int]] = []
+        self.calls: list[tuple[int, str, int, str]] = []
         self.spans: list[RecordingSpan] = []
         self.exited = 0
 
     @contextmanager
-    def __call__(self, phrase_id, text, speech_ms):
-        self.calls.append((phrase_id, text, speech_ms))
+    def __call__(self, phrase_id, text, speech_ms, direction_id):
+        self.calls.append((phrase_id, text, speech_ms, direction_id))
         span = RecordingSpan()
         self.spans.append(span)
         try:
@@ -282,6 +283,7 @@ async def test_a_finalized_phrase_opens_and_closes_exactly_one_span():
         translate=translate,
         emit=lambda event: asyncio.sleep(0),
         settings=make_settings(translate_interims=False),
+        direction=EN_TO_KO,
         trace_phrase=tracer,
     )
     await _run(
@@ -309,6 +311,7 @@ async def test_a_successful_translation_is_recorded_on_the_span():
         translate=translate,
         emit=lambda event: asyncio.sleep(0),
         settings=make_settings(translate_interims=False),
+        direction=EN_TO_KO,
         trace_phrase=tracer,
     )
     await _run(pipeline, [TranscriptEvent(phrase_id=0, text="hi", is_final=True)])
@@ -335,6 +338,7 @@ async def test_a_failed_translation_is_recorded_on_the_span_and_still_emits():
         translate=translate,
         emit=emit,
         settings=make_settings(translate_interims=False),
+        direction=EN_TO_KO,
         trace_phrase=tracer,
     )
     await _run(pipeline, [TranscriptEvent(phrase_id=0, text="hi", is_final=True)])
@@ -356,7 +360,7 @@ async def test_a_broken_tracer_never_kills_the_finals_worker():
     """
 
     @contextmanager
-    def exploding_tracer(phrase_id, text, speech_ms):
+    def exploding_tracer(phrase_id, text, speech_ms, direction_id):
         raise RuntimeError("tracer exploded")
         yield  # pragma: no cover
 
@@ -372,6 +376,7 @@ async def test_a_broken_tracer_never_kills_the_finals_worker():
         translate=translate,
         emit=emit,
         settings=make_settings(translate_interims=False),
+        direction=EN_TO_KO,
         trace_phrase=exploding_tracer,
     )
     await _run(
@@ -400,6 +405,7 @@ async def test_speech_ms_is_measured_from_the_phrases_first_event():
         translate=translate,
         emit=lambda event: asyncio.sleep(0),
         settings=make_settings(translate_interims=False),
+        direction=EN_TO_KO,
         now=lambda: clock["t"],
         trace_phrase=tracer,
     )

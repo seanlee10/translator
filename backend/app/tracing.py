@@ -248,7 +248,9 @@ def shutdown_tracing() -> None:
 
 
 @contextmanager
-def phrase_span(phrase_id: int, text: str, speech_ms: int) -> Iterator[object]:
+def phrase_span(
+    phrase_id: int, text: str, speech_ms: int, direction_id: str
+) -> Iterator[object]:
     """One span tree per finalized phrase. A no-op when tracing is off.
 
     The provider instrumentor's LLM span lands inside this one because

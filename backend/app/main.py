@@ -199,6 +199,7 @@ async def session(ws: WebSocket) -> None:
                         translate=router.translate,
                         emit=emit,
                         settings=settings,
+                        direction=direction,
                         # A no-op unless setup_tracing() actually came up.
                         trace_phrase=phrase_span,
                     )

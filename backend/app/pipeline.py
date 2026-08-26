@@ -9,6 +9,7 @@ from typing import Awaitable, Callable, ContextManager, Iterator, Protocol, Sequ
 from pydantic import BaseModel
 
 from app.config import Settings
+from app.direction import Direction
 from app.models import (
     CaptionOut,
     ContextPair,
@@ -33,13 +34,13 @@ class PhraseSpan(Protocol):
     knows nothing about spans, exporters, or attribute names.
     """
 
-    def set_translation(self, ko: str, provider: str, latency_ms: int) -> None: ...
+    def set_translation(self, text: str, provider: str, latency_ms: int) -> None: ...
 
     def set_error(self, exc: BaseException) -> None: ...
 
 
 class _NullPhraseSpan:
-    def set_translation(self, ko: str, provider: str, latency_ms: int) -> None:
+    def set_translation(self, text: str, provider: str, latency_ms: int) -> None:
         pass
 
     def set_error(self, exc: BaseException) -> None:
@@ -48,7 +49,7 @@ class _NullPhraseSpan:
 
 @contextmanager
 def null_trace_phrase(
-    phrase_id: int, text: str, speech_ms: int
+    phrase_id: int, text: str, speech_ms: int, direction_id: str
 ) -> Iterator[PhraseSpan]:
     """The default. Tracing is injected, never imported.
 
@@ -60,7 +61,7 @@ def null_trace_phrase(
     yield _NullPhraseSpan()
 
 
-TracePhrase = Callable[[int, str, int], ContextManager[PhraseSpan]]
+TracePhrase = Callable[[int, str, int, str], ContextManager[PhraseSpan]]
 
 
 @dataclass
@@ -83,12 +84,14 @@ class Pipeline:
         translate: Translate,
         emit: Emit,
         settings: Settings,
+        direction: Direction,
         now: Callable[[], float] = time.monotonic,
         trace_phrase: TracePhrase = null_trace_phrase,
     ) -> None:
         self._translate = translate
         self._emit = emit
         self._s = settings
+        self._direction = direction
         self._now = now
         self._trace_phrase = trace_phrase
         self._translate_interims = settings.translate_interims
@@ -118,7 +121,8 @@ class Pipeline:
             state = PhraseState(created_at=self._now())
             self._phrases[event.phrase_id] = state
 
-        await self._emit(TranscriptOut(phrase_id=event.phrase_id, en=event.text))
+        en, ko = self._direction.to_slots(event.text, None)
+        await self._emit(TranscriptOut(phrase_id=event.phrase_id, en=en, ko=ko))
 
         if event.is_final:
             # The English is published for finals too, *before* the
@@ -150,7 +154,9 @@ class Pipeline:
                 )
                 # The translation is awaited inside this block so the
                 # provider SDK's own span nests under the phrase.
-                with self._trace_phrase(phrase_id, text, speech_ms) as span:
+                with self._trace_phrase(
+                    phrase_id, text, speech_ms, self._direction.id
+                ) as span:
                     try:
                         result = await self._translate_final(text)
                     except (
@@ -167,13 +173,19 @@ class Pipeline:
                         span.set_translation(
                             result.text, result.provider, result.latency_ms
                         )
-                        self._context.append(ContextPair(en=text, ko=result.text))
+                        en, ko = self._direction.to_slots(text, result.text)
+                        # to_slots returns Optionals for the transcript case;
+                        # here both sides exist by construction, and CaptionOut
+                        # requires both. Narrow at this one site rather than
+                        # loosening the model.
+                        assert en is not None and ko is not None
+                        self._context.append(ContextPair(en=en, ko=ko))
                         async with self._emit_lock:
                             await self._emit(
                                 CaptionOut(
                                     phrase_id=phrase_id,
-                                    en=text,
-                                    ko=result.text,
+                                    en=en,
+                                    ko=ko,
                                     status="final",
                                     provider=result.provider,
                                     latency_ms=result.latency_ms,
@@ -241,11 +253,13 @@ class Pipeline:
             if state.closed:
                 return  # sequence guard: a final already won this phrase
 
+            en, ko = self._direction.to_slots(event.text, result.text)
+            assert en is not None and ko is not None
             await self._emit(
                 CaptionOut(
                     phrase_id=event.phrase_id,
-                    en=event.text,
-                    ko=result.text,
+                    en=en,
+                    ko=ko,
                     status="provisional",
                     provider=result.provider,
                     latency_ms=result.latency_ms,
