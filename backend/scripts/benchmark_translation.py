@@ -569,6 +569,91 @@ def arize_annotations(rows):
     return records
 
 
+
+def publish_quality(settings, rows, run_id: str) -> int:
+    """Publish judged results to Arize as ordinary span attributes.
+
+    This is what makes the Arize dashboard stand on its own. Latency and cost
+    already arrive natively from the live app's tracing; quality did not, and
+    backfilling it by hand after every run makes the dashboard a snapshot
+    somebody has to maintain rather than something a run keeps current.
+
+    Deliberately NOT Arize's evaluation machinery. That path (dataset ->
+    experiment -> eval task) mixed outputs between experiments: judged
+    explanations quoted Korean that belonged to a different model, 87% of the
+    time for one provider, which inverted the ranking. Plain numeric span
+    attributes become spanProperty dimensions — the same mechanism
+    translation.latency_ms already uses — and widgets read them directly.
+
+    A separate project, because these spans carry the same provider and
+    latency attributes as live ones and would otherwise skew every live
+    latency widget that filters on provider.
+    """
+    space = settings.arize_space_id.strip()
+    key = settings.arize_api_key.strip()
+    if not (space and key):
+        logger.info("skipping quality publish: Arize credentials are not set")
+        return 0
+
+    from arize.otel import register
+    from opentelemetry.trace import Status, StatusCode
+
+    kwargs = {
+        "space_id": space,
+        "api_key": key,
+        "project_name": settings.arize_quality_project,
+        # Never take over the global provider: the benchmark's own tracing
+        # (app/tracing.py) owns it and points at the live project.
+        "set_global_tracer_provider": False,
+    }
+    if settings.arize_endpoint.strip():
+        kwargs["endpoint"] = settings.arize_endpoint.strip()
+    provider = register(**kwargs)
+    tracer = provider.get_tracer("benchmark-quality")
+
+    published = 0
+    for row in rows:
+        verdict = row.get("judgment") or {}
+        scores = verdict.get("scores") or {}
+        ranking = verdict.get("rank") or []
+        for name, t in row["translations"].items():
+            if not t.get("ko"):
+                continue
+            axes = scores.get(name) or {}
+            with tracer.start_as_current_span("translation") as span:
+                span.set_attribute("openinference.span.kind", "CHAIN")
+                span.set_attribute("input.value", row["en"])
+                span.set_attribute("output.value", t["ko"])
+                span.set_attribute("provider", name)
+                span.set_attribute("model_id", getattr(settings, f"{name}_model", name))
+                span.set_attribute("latency_ms", t["latency_ms"])
+                span.set_attribute("phrase_id", row["phrase_id"])
+                span.set_attribute("session.id", run_id)
+                usable = []
+                for axis in ("accuracy", "fluency", "register"):
+                    value = axes.get(axis)
+                    if isinstance(value, (int, float)):
+                        span.set_attribute(f"quality_{axis}", float(value))
+                        usable.append(float(value))
+                if usable:
+                    span.set_attribute("quality_overall", sum(usable) / len(usable))
+                if ranking:
+                    span.set_attribute(
+                        "rank", ranking.index(name) + 1 if name in ranking else 0
+                    )
+                    span.set_attribute("is_winner", 1.0 if ranking[0] == name else 0.0)
+                span.set_status(Status(StatusCode.OK))
+                published += 1
+
+    # Without the flush the process exits before the batch exporter runs and
+    # nothing reaches Arize.
+    provider.force_flush()
+    provider.shutdown()
+    logger.info("published %d quality spans to project %s",
+                published, settings.arize_quality_project)
+    return published
+
+
 # --------------------------------------------------------------------- main
 
 
@@ -645,6 +730,12 @@ async def main(args) -> int:
     }
     results_path.write_text(json.dumps(results, ensure_ascii=False, indent=2))
 
+    if not args.no_publish:
+        try:
+            publish_quality(settings, rows, run_id)
+        except Exception:  # noqa: BLE001 - publishing must not lose the run
+            logger.exception("quality publish failed; results.json is unaffected")
+
     annotations = arize_annotations(rows)
     if annotations:
         (work / "arize_annotations.json").write_text(
@@ -687,5 +778,7 @@ if __name__ == "__main__":
     p.add_argument("--no-pace", action="store_true",
                    help="fire phrases back to back; risks provider rate limits")
     p.add_argument("--pace-cap", type=float, default=PACE_CAP_S)
+    p.add_argument("--no-publish", action="store_true",
+                   help="skip publishing judged results to Arize")
     p.add_argument("--force", action="store_true")
     raise SystemExit(asyncio.run(main(p.parse_args())))

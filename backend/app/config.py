@@ -94,6 +94,12 @@ class Settings(BaseSettings):
     arize_space_id: str = ""
     arize_api_key: str = ""
     arize_project_name: str = "live-caption-translator"
+    # Where scripts/benchmark_translation.py publishes its judged results.
+    # Deliberately a *separate* project: those spans carry the same
+    # provider/latency attributes as live ones, so mixing them into the live
+    # project would quietly skew every latency widget that filters on
+    # provider.
+    arize_quality_project: str = "translator-quality"
     arize_endpoint: str = ""
 
     # Transcription
