@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { OverlayMessage, OverlaySnapshot } from "../lib/overlay";
 import { OVERLAY_CHANNEL } from "../lib/overlay";
+import { sourceTextOf, targetTextOf, type DirectionInfo } from "../directions";
 
 const EMPTY_SNAPSHOT: OverlaySnapshot = {
   type: "snapshot",
@@ -9,7 +10,11 @@ const EMPTY_SNAPSHOT: OverlaySnapshot = {
   fontSize: 28,
 };
 
-export function OverlayView() {
+interface OverlayViewProps {
+  direction: DirectionInfo;
+}
+
+export function OverlayView({ direction }: OverlayViewProps) {
   const [snapshot, setSnapshot] = useState(EMPTY_SNAPSHOT);
 
   useEffect(() => {
@@ -53,13 +58,13 @@ export function OverlayView() {
                 className="overlay-en"
                 style={{ fontSize: `${Math.max(20, snapshot.fontSize * 0.7)}px` }}
               >
-                {phrase.en}
+                {sourceTextOf(phrase, direction) ?? ""}
               </p>
               <p
                 className="overlay-ko"
                 style={{ fontSize: `${Math.max(32, snapshot.fontSize * 1.45)}px` }}
               >
-                {phrase.ko ?? "번역 중…"}
+                {targetTextOf(phrase, direction) ?? direction.translatingPlaceholder}
               </p>
             </article>
           ))

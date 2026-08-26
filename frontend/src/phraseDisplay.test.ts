@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Phrase } from "./hooks/useCaptionSocket";
 import { hasInFlightPhrase, isTerminalPhrase, visiblePhrases } from "./phraseDisplay";
+import { directionById, sourceTextOf } from "./directions";
 
 function phrase(overrides: Partial<Phrase>): Phrase {
   return {
@@ -44,25 +45,44 @@ describe("isTerminalPhrase", () => {
     expect(p.ko).toBe("안녕하세요");
   });
 
-  it("is terminal when translation failed, with the English present and no Korean — guards against silently losing the phrase", () => {
-    // This is the case the whole design exists to protect: if "terminal"
-    // were implemented as "status === 'final'" instead of "final or error",
-    // this phrase would never become visible and its English would vanish
-    // along with the failed translation. Asserting both isTerminalPhrase
-    // AND the presence of `en` here means this test fails loudly under
-    // that regression, not just silently under-counts rows.
-    const p = phrase({
-      status: "error",
-      en: "hello there",
-      ko: null,
-      provider: null,
-      latencyMs: null,
-      errorMessage: "translation failed: timeout",
-    });
-    expect(isTerminalPhrase(p)).toBe(true);
-    expect(p.en).toBe("hello there");
-    expect(p.en?.length).toBeGreaterThan(0);
-    expect(p.ko).toBeNull();
+});
+
+const failedPhrase = (directionId: "en>ko" | "ko>en"): Phrase =>
+  directionId === "en>ko"
+    ? {
+        phraseId: 2, en: "three", ko: null, status: "error",
+        provider: null, latencyMs: null, errorMessage: "provider exploded",
+      }
+    : {
+        phraseId: 2, en: null, ko: "셋", status: "error",
+        provider: null, latencyMs: null, errorMessage: "provider exploded",
+      };
+
+describe.each(["en>ko", "ko>en"] as const)("in the %s direction", (id) => {
+  const direction = directionById(id);
+
+  it("keeps a failed phrase visible with its source text intact", () => {
+    // If isTerminalPhrase were `status === "final"` alone, this phrase would
+    // never become visible and its source text would vanish — the exact bug
+    // the final's transcript event exists to prevent. Asserting the source
+    // is non-empty is what makes a regression fail loudly instead of
+    // quietly passing on an empty row.
+    const phrase = failedPhrase(id);
+    expect(isTerminalPhrase(phrase)).toBe(true);
+
+    const visible = visiblePhrases([phrase]);
+    expect(visible).toHaveLength(1);
+    const source = sourceTextOf(visible[0], direction);
+    expect(source).not.toBeNull();
+    expect(source!.length).toBeGreaterThan(0);
+  });
+
+  it("never reveals a provisional translation", () => {
+    const provisional: Phrase = {
+      phraseId: 0, en: "partial", ko: "부분", status: "provisional",
+      provider: "anthropic", latencyMs: 40, errorMessage: null,
+    };
+    expect(isTerminalPhrase(provisional)).toBe(false);
   });
 });
 

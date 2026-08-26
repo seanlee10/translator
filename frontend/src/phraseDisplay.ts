@@ -9,11 +9,11 @@ import type { Phrase } from "./hooks/useCaptionSocket";
  * "Terminal" is deliberately NOT "status === 'final'". A phrase whose
  * translation failed never reaches "final" — the pipeline emits a
  * phrase-scoped error instead (see useCaptionSocket's markPhraseError) —
- * and treating only "final" as visible would mean that phrase's English
- * never appears at all, silently losing it. That exact bug was found and
- * fixed once already in this project (the final's `transcript` event
- * exists precisely so the English survives a failed translation); "final
- * OR error" is what keeps it fixed here.
+ * and treating only "final" as visible would mean that phrase's SOURCE
+ * text never appears at all, silently losing it. That exact bug was found
+ * and fixed once already in this project (the final's `transcript` event
+ * exists precisely so the source text survives a failed translation);
+ * "final OR error" is what keeps it fixed here, in either direction.
  */
 export function isTerminalPhrase(phrase: Pick<Phrase, "status">): boolean {
   return phrase.status === "final" || phrase.status === "error";

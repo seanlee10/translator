@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Phrase } from "../hooks/useCaptionSocket";
+import { directionById, targetTextOf } from "../directions";
 import {
   createOverlaySnapshot,
   selectOverlayPhrases,
@@ -49,5 +50,21 @@ describe("createOverlaySnapshot", () => {
       status: "listening",
       fontSize: 28,
     });
+  });
+
+  it("carries a phrase whose target has not arrived yet", () => {
+    // The overlay is an INDEPENDENT reader of the same phrase stream — it is
+    // not filtered by phraseDisplay.ts and still shows the dimmed provisional
+    // stage. It therefore has to cope with a null target slot on its own.
+    const snapshot = createOverlaySnapshot(
+      [{
+        phraseId: 0, en: null, ko: "안녕하세요", status: "interim",
+        provider: null, latencyMs: null, errorMessage: null,
+      }],
+      "listening",
+      32,
+    );
+    expect(snapshot.phrases).toHaveLength(1);
+    expect(targetTextOf(snapshot.phrases[0], directionById("ko>en"))).toBeNull();
   });
 });
