@@ -3,9 +3,16 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.models import ProviderName
+from app.models import DirectionName, ProviderName
 
-__all__ = ["ProviderName", "Settings", "get_settings", "ENV_FILES", "REPO_ROOT"]
+__all__ = [
+    "DirectionName",
+    "ProviderName",
+    "Settings",
+    "get_settings",
+    "ENV_FILES",
+    "REPO_ROOT",
+]
 
 # pydantic-settings resolves a bare "env_file" name against the *process CWD*.
 # README documents starting the server from backend/ with .env at the repo
@@ -42,6 +49,11 @@ class Settings(BaseSettings):
 
     # Translation providers
     default_provider: ProviderName = "anthropic"
+    # Which way this server translates by default. The browser may override
+    # it per session in the `start` message; it cannot be changed mid-session
+    # because Deepgram's `language` is fixed at connect time and this app
+    # deliberately has no reconnect path (see README's Known limitations).
+    default_direction: DirectionName = "en>ko"
     anthropic_model: str = "claude-haiku-4-5"
     groq_model: str = "qwen/qwen3.6-27b"
     # Host only. The groq SDK appends "/openai/v1/chat/completions" itself, so a

@@ -23,6 +23,7 @@ def test_defaults_match_the_design():
     assert s.xai_model == "grok-4.20-0309-non-reasoning"
     assert s.xai_base_url == "https://api.x.ai/v1"
     assert s.default_provider == "anthropic"
+    assert s.default_direction == "en>ko"
     assert s.deepgram_model == "nova-3"
     assert s.translate_interims is False
     assert s.debounce_ms == 400

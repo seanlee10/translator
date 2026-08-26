@@ -4,6 +4,12 @@ from typing import Literal
 from pydantic import BaseModel
 
 ProviderName = Literal["anthropic", "groq", "xai"]
+# The known translation directions, as ids that ride on the wire and on the
+# `phrase.direction` tracing attribute. Declared here, next to ProviderName,
+# and imported into config.py — a duplicated literal means adding a
+# direction takes three edits instead of two, and a missed copy fails
+# silently rather than loudly.
+DirectionName = Literal["en>ko", "ko>en"]
 
 # ---- Internal domain types (never cross the wire directly) ----
 
