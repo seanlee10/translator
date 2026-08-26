@@ -43,7 +43,7 @@ async def main(text: str, provider: str | None) -> int:
         print("\nFAIL: tracing did not come up. Set ARIZE_SPACE_ID and ARIZE_API_KEY.")
         return 1
 
-    router = _default_router_factory(settings)
+    router = _default_router_factory(settings, EN_TO_KO)
     if provider is not None:
         router.set_provider(provider)
     if router.current_provider is None:

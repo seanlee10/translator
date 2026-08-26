@@ -240,6 +240,11 @@ def render(results: dict) -> str:
     providers = list(summary)
     rows = results["rows"]
     models = results.get("models", {})
+    # This script deliberately does not import app.direction — it only ever
+    # reads results.json, so it can re-render without the app package or a
+    # working directory. Same two directions, small local label instead.
+    direction = results.get("direction", "en>ko")
+    source_label = "korean" if direction == "ko>en" else "english"
 
     flags = {n: throttle(rows, n) for n in providers}
     judged_any = any(s["judged"] for s in summary.values())
@@ -271,6 +276,7 @@ def render(results: dict) -> str:
     audio_name = Path(results.get("audio", "")).name
     minutes = results.get("minutes")
     out.append('<div class="meta">')
+    out.append(f'<div>direction <b>{esc(results.get("direction", "en>ko"))}</b></div>')
     out.append(f'<div>source <b>{esc(audio_name)}</b></div>')
     out.append(
         f'<div>span <b>{esc(f"first {minutes:g} min" if minutes else "full")}</b></div>'
@@ -373,7 +379,7 @@ def render(results: dict) -> str:
 
     # ---- phrase table ----
     out.append("<section><h2>Phrase by phrase</h2><div class=\"scroll\"><table>")
-    out.append("<thead><tr><th>at</th><th>english</th>")
+    out.append(f"<thead><tr><th>at</th><th>{esc(source_label)}</th>")
     for name in providers:
         out.append(
             f'<th class="hue" style="--hue:var(--hue-{name})">{esc(name)}</th>'
