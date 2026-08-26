@@ -12,6 +12,7 @@ from deepgram.core.events import EventType
 
 from app.config import get_settings
 from app.deepgram_client import connect_params, message_to_dict
+from app.direction import EN_TO_KO
 
 SAMPLE_RATE = 16000
 
@@ -31,7 +32,7 @@ async def main() -> None:
     seen = 0
 
     async with client.listen.v1.connect(
-        **connect_params(settings, SAMPLE_RATE)
+        **connect_params(settings, SAMPLE_RATE, EN_TO_KO)
     ) as connection:
 
         async def on_message(message):

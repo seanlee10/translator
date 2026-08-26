@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.config import get_settings  # noqa: E402
 from app.deepgram_client import DeepgramSource  # noqa: E402
+from app.direction import EN_TO_KO  # noqa: E402
 from app.models import ContextPair  # noqa: E402
 from app.providers import build_providers  # noqa: E402
 from app.tracing import setup_tracing, shutdown_tracing, tracing_enabled  # noqa: E402
@@ -110,7 +111,7 @@ async def transcribe(settings, audio: Path, seconds: float | None, speed: float)
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
 
-    source = DeepgramSource(settings, SAMPLE_RATE)
+    source = DeepgramSource(settings, SAMPLE_RATE, EN_TO_KO)
     await source.connect()
 
     sent = {"bytes": 0}
