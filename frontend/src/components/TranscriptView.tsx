@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { sourceTextOf, targetTextOf, type DirectionInfo } from "../directions";
 import type { Phrase } from "../hooks/useCaptionSocket";
 import { hasInFlightPhrase, visiblePhrases } from "../phraseDisplay";
 import { labelFor, type ProviderInfo } from "../providers";
@@ -7,9 +8,10 @@ interface Props {
   phrases: Phrase[];
   fontSize: number;
   providers: ProviderInfo[];
+  direction: DirectionInfo;
 }
 
-export function TranscriptView({ phrases, fontSize, providers }: Props) {
+export function TranscriptView({ phrases, fontSize, providers, direction }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
 
@@ -42,8 +44,14 @@ export function TranscriptView({ phrases, fontSize, providers }: Props) {
           <h2>Conversation</h2>
         </div>
         <div className="language-legend">
-          <span><i className="legend-dot en-dot" />English</span>
-          <span><i className="legend-dot ko-dot" />한국어</span>
+          <span>
+            <i className={`legend-dot ${direction.sourceLang}-dot`} />
+            {direction.sourceLabel}
+          </span>
+          <span>
+            <i className={`legend-dot ${direction.targetLang}-dot`} />
+            {direction.targetLabel}
+          </span>
         </div>
       </header>
 
@@ -69,9 +77,14 @@ export function TranscriptView({ phrases, fontSize, providers }: Props) {
                 </div>
               </div>
               <h3>Your live captions will appear here</h3>
-              <p>Choose a model, start listening, and begin speaking in English.</p>
+              <p>
+                Choose a model, start listening, and begin speaking in{" "}
+                {direction.sourceLabel}.
+              </p>
               <div className="empty-flow">
-                <span>EN speech</span><i>→</i><span>Deepgram</span><i>→</i><span>한국어</span>
+                <span>{direction.sourceLabel} speech</span><i>→</i>
+                <span>Deepgram</span><i>→</i>
+                <span>{direction.targetLabel}</span>
               </div>
             </div>
           ) : (
@@ -86,19 +99,23 @@ export function TranscriptView({ phrases, fontSize, providers }: Props) {
                   <div className="phrase-number">
                     {String(phrase.phraseId + 1).padStart(2, "0")}
                   </div>
-                  <div className="caption-col en">
-                    <p>{phrase.en}</p>
-                    <span className="language-tag">EN</span>
+                  <div className={`caption-col source is-${direction.sourceLang}`}>
+                    <p>{sourceTextOf(phrase, direction) ?? ""}</p>
+                    <span className={`language-tag lang-${direction.sourceLang}`}>
+                      {direction.sourceLang.toUpperCase()}
+                    </span>
                   </div>
-                  <div className="caption-col ko-cell">
+                  <div className={`caption-col target is-${direction.targetLang}`}>
                     {phrase.status === "error" ? (
                       <>
-                        <p className="ko error-marker">
+                        <p className="error-marker">
                           <span className="error-mark" aria-hidden="true">!</span>
                           Translation unavailable
                         </p>
                         <div className="caption-meta">
-                          <span className="language-tag ko-tag">KO</span>
+                          <span className={`language-tag lang-${direction.targetLang}`}>
+                            {direction.targetLang.toUpperCase()}
+                          </span>
                           <span className="provenance error-text">
                             {phrase.errorMessage ?? "translation failed"}
                           </span>
@@ -106,9 +123,11 @@ export function TranscriptView({ phrases, fontSize, providers }: Props) {
                       </>
                     ) : (
                       <>
-                        <p className="ko">{phrase.ko}</p>
+                        <p>{targetTextOf(phrase, direction) ?? ""}</p>
                         <div className="caption-meta">
-                          <span className="language-tag ko-tag">KO</span>
+                          <span className={`language-tag lang-${direction.targetLang}`}>
+                            {direction.targetLang.toUpperCase()}
+                          </span>
                           {phrase.provider && (
                             <span className="provenance">
                               {labelFor(providers, phrase.provider)}

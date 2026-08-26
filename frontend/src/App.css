@@ -218,16 +218,20 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .caption-col { min-width: 0; padding: 21px 24px 22px 6px; line-height: 1.48; }
 .caption-col + .caption-col { padding-left: 22px; border-left: 1px solid var(--border-subtle); }
 .caption-col p { margin: 0; overflow-wrap: anywhere; }
-.caption-col.en { color: #aeb3bc; font-weight: 400; }
-.caption-col .ko { color: #f2f3f6; font-weight: 510; }
+/* Role decides weight and position; language decides only the accent.
+   Before this split, `.caption-col.en` meant both "the left column" and
+   "the English text", which stops being one thing once either language
+   can be the source. */
+.caption-col.source p { color: #aeb3bc; font-weight: 400; }
+.caption-col.target p { color: #f2f3f6; font-weight: 510; }
 .language-tag { display: inline-block; margin-top: 11px; color: #555a62; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8px; letter-spacing: .1em; }
-.ko-tag { color: #6f70aa; }
+.language-tag.lang-ko { color: #6f70aa; }
 .caption-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .provenance { margin-top: 11px; color: #555a62; font-size: 9px; font-variant-numeric: tabular-nums; }
 /* A row's translation failed: English still shown (see phraseDisplay.ts —
    this is the terminal-but-not-final case), Korean replaced by a clear,
    quiet marker rather than left blank or silently dropped. */
-.caption-col .ko.error-marker { display: flex; align-items: center; gap: 7px; color: var(--danger); font-weight: 510; font-style: normal; }
+.caption-col.target p.error-marker { display: flex; align-items: center; gap: 7px; color: var(--danger); font-weight: 510; font-style: normal; }
 .error-mark { display: inline-grid; flex: 0 0 auto; place-items: center; width: 15px; height: 15px; border-radius: 50%; background: rgba(255,107,122,.16); color: var(--danger); font-size: 10px; font-weight: 700; }
 .provenance.error-text { color: var(--danger); opacity: .85; }
 /* The in-progress-phrase loader: sits at the bottom of the transcript
@@ -362,14 +366,14 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 :root[data-theme="light"] .transcript-row.is-current {
   background: linear-gradient(90deg, rgba(94,106,210,.025), rgba(94,106,210,.07));
 }
-:root[data-theme="light"] .caption-col.en { color: #5f6671; }
-:root[data-theme="light"] .caption-col .ko { color: #20232a; }
+:root[data-theme="light"] .caption-col.source p { color: #5f6671; }
+:root[data-theme="light"] .caption-col.target p { color: #20232a; }
 :root[data-theme="light"] .orbit-ring { border-color: rgba(94,106,210,.15); }
 :root[data-theme="light"] .ring-two { border-color: rgba(94,106,210,.27); }
 :root[data-theme="light"] .panel-kicker,
 :root[data-theme="light"] .eyebrow { color: #8a919c; }
 :root[data-theme="light"] .error-banner { color: #9c3040; background: rgba(210,55,75,.07); }
-:root[data-theme="light"] .caption-col .ko.error-marker,
+:root[data-theme="light"] .caption-col.target p.error-marker,
 :root[data-theme="light"] .provenance.error-text { color: #9c3040; }
 :root[data-theme="light"] .error-mark { background: rgba(210,55,75,.1); color: #9c3040; }
 
