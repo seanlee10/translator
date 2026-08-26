@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Live caption translator: microphone → Deepgram streaming STT → Claude Haiku 4.5, Qwen3.6-27B, or Grok 4.20 non-reasoning (switchable mid-session) → side-by-side English/Korean captions. See `README.md` for setup and the `backend/.env` tuning table.
+Live caption translator: microphone → Deepgram streaming STT → Claude Haiku 4.5, Qwen3.6-27B, or Grok 4.20 non-reasoning (switchable mid-session) → side-by-side English/Korean captions. Direction (English→Korean or Korean→English) is chosen before each session and fixed for its duration. See `README.md` for setup and the `backend/.env` tuning table.
 
 ## Commands
 
@@ -10,7 +10,7 @@ Live caption translator: microphone → Deepgram streaming STT → Claude Haiku 
 # Backend (from backend/)
 pip install -e ".[dev]"
 uvicorn app.main:app --reload          # :8000
-python -m pytest -v                     # 109 tests
+python -m pytest -v                     # 181 tests
 python -m pytest tests/test_pipeline.py::test_a_late_interim_never_overwrites_a_finalized_phrase -v
 
 # Frontend (from frontend/)
@@ -48,7 +48,7 @@ Deepgram does not provide phrase IDs. `PhraseTracker` assigns them: **a phrase i
 
 Each phrase produces: several `transcript` events (English only, free) — **including one for the `is_final` result itself** — zero or more `caption` events with `status:"provisional"`, then one `caption` with `status:"final"` that supersedes them.
 
-The final's `transcript` event is not redundant. It is what guarantees a row exists with the correct English even when the translation fails, which the spec's Error Handling section requires. The client ranks `transcript` as `interim`, so it refines English without regressing status or blanking Korean.
+The final's `transcript` event is not redundant. It is what guarantees a row exists with the correct **source text** even when the translation fails, which the spec's Error Handling section requires. `en` and `ko` on the wire are **language** slots, not source/target roles — `en` always holds English and `ko` always Korean, whichever was spoken — and `Direction.to_slots` (`app/direction.py`) is the single place that mapping is decided. The client ranks `transcript` as `interim`, so it refines the source text without regressing status or blanking the translation.
 
 **The frontend now reveals a row only once its phrase is terminal** (`status:"final"`, or a phrase-scoped `error` — see the Frontend section below), never on `transcript`/`interim` or `caption`/`provisional` alone. Those events still arrive and still update internal state (and drive the in-progress loader), but are never rendered as changing text — that's the point of this design: the backend's wire protocol (interim → zero-or-more provisional → final) is unchanged, only what the client chooses to draw from it changed.
 
@@ -76,6 +76,15 @@ Three API constraints that will produce confusing failures if "cleaned up":
 - **Anthropic**: `claude-haiku-4-5` rejects `effort`, `thinking`, and `output_config` — plain `messages.create` with `model`/`max_tokens`/`system`/`messages` only.
 - **Groq**: `qwen/qwen3.6-27b` is a reasoning model. `reasoning_effort="none"` and `reasoning_format="hidden"` are **mandatory**, not tunable — without them every caption pays a hidden reasoning pass and the latency budget is gone. `clean_output` also strips `<think>` blocks as a second line of defense.
 - **xAI**: `grok-4.20-0309-non-reasoning` is the non-reasoning variant built for speed-critical requests. Unlike Groq/Qwen, there is no reasoning pass to disable — `reasoning_effort`/`reasoning_format` must never be sent to it. It is OpenAI-compatible (`https://api.x.ai/v1`, `/chat/completions`) and uses the `openai` package's `AsyncOpenAI` client rather than the `groq` SDK with a swapped base URL, so the two services can diverge without silently breaking each other.
+
+### Direction: `app/direction.py`
+
+`DIRECTIONS` declares the two directions the same way `PROVIDER_REGISTRY` declares the providers — one place, everything derives. A `Direction` carries the Deepgram language, the prompt's source/target labels, whether `korean_register` applies, and `to_slots`.
+
+- **The module imports no I/O library, and that is load-bearing.** `pipeline.py` imports it, and pipeline.py's offline testability rests on depending on no SDK.
+- **Direction is session-scoped.** It rides in the `start` message and cannot be changed by `config` — Deepgram's `language` is fixed at connect time and this app has no reconnect path. The `config` handler rejects it out loud rather than ignoring it.
+- **An unknown direction never costs the user their session.** `resolve_direction` returns the fallback plus a message, which `main.py` emits as a non-fatal `ErrorOut` — the same posture `_default_router_factory` takes for an unconfigured `DEFAULT_PROVIDER`.
+- `korean_register` applies only when Korean is the target. English gets no tone knob.
 
 ### Provider discovery: the backend is the single source of truth
 
@@ -129,11 +138,13 @@ Uploading judge scores to Arize needs annotation configs created first, and the 
 
 ### Frontend
 
-- **Captions are keyed by `phrase_id` and replaced in place**, rendered in ascending `phrase_id` order — never arrival order. A `transcript` event must not blank Korean already present for that phrase (English updates faster; blanking flickers).
+- **Captions are keyed by `phrase_id` and replaced in place**, rendered in ascending `phrase_id` order — never arrival order. A `transcript` event must not blank the translation already present for that phrase (the source language updates faster; blanking flickers).
+- **`Phrase.en`/`Phrase.ko` are nullable** (`src/hooks/useCaptionSocket.ts`), mirroring `TranscriptOut`'s language slots: only the spoken side is guaranteed to exist until a translation lands. `markPhraseError` preserves whichever slot is the current direction's source and explicitly clears the target slot to `null` rather than leaving a stale value. The transcript columns are role-based, not language-based — `TranscriptView` renders `caption-col source`/`caption-col target` (each also carrying `is-en`/`is-ko` and a `language-tag lang-en`/`lang-ko`), so the left/right layout and styling follow the session's `Direction`, not a hardcoded English/Korean assumption.
+- **The direction set is a frontend constant** (`src/directions.ts`'s `DIRECTIONS`), not a fetched endpoint. Unlike providers, whose availability varies at runtime with which API keys are configured, the two directions have no such variance — an endpoint would imitate a pattern whose justification doesn't apply here. `displayDirection(phraseCount, pending, session)` shows the pending selection while no phrases exist yet and the session's actual direction once they do, since the direction toggle is disabled while a session is live.
 - `STATUS_RANK` (interim < provisional < final, with `error` ranked equal to `final`) discards lower-rank updates. It uses **strict `<`** deliberately: multiple provisionals per phrase are normal, and `<=` would freeze captions at the first one. `final` and `error` never need ranking against each other — the finals worker emits exactly one of `CaptionOut(final)` or a phrase-scoped `ErrorOut` per phrase, never both.
 - **A row only ever renders once its phrase is terminal.** `src/phraseDisplay.ts` (`isTerminalPhrase`/`visiblePhrases`/`hasInFlightPhrase`) is the single, unit-tested source of truth for "terminal": `status === "final" OR status === "error"`. **Not** `status === "final"` alone — that would silently drop every phrase whose translation failed, which is the exact bug the final's `transcript` event exists to prevent (see "The phrase model" above). `TranscriptView` renders `visiblePhrases(phrases)` for rows and shows a quiet, `prefers-reduced-motion`-aware pulsing-dots loader (`.phrase-loader`) whenever `hasInFlightPhrase(phrases)` is true, instead of ever rendering interim/provisional text.
-- **`useCaptionSocket`'s `Phrase.status` includes `"error"`**, set by `markPhraseError` when a phrase-scoped `ErrorOut` (`phrase_id` non-null) arrives. It preserves whatever English the phrase's prior `transcript` events already established — the wire's `ErrorOut` carries no English at all — and explicitly clears `ko`/`provider`/`latencyMs` to `null` rather than falling back to a stale provisional's values. `upsert`'s general merge only preserves existing `ko`/`provider`/`latencyMs` on an `"interim"` update now; every other status (`provisional`, `final`, `error`) is a real update that replaces those fields outright, including replacing them with `null`.
-- **The presentation overlay does not share the terminal-only reveal.** `OverlayView.tsx` (via `lib/overlay.ts`'s `createOverlaySnapshot`) renders straight from `socket.phrases` — the last two phrases, unfiltered by `phraseDisplay.ts` — and still styles a non-`"final"` phrase as `is-provisional` with a "번역 중…" placeholder. If `TRANSLATE_INTERIMS=true`, the overlay will still show that dimmed provisional stage even though the main transcript view never does. Keep this in mind if the overlay's display logic changes — the two are two independent readers of the same phrase stream, not one shared component.
+- **`useCaptionSocket`'s `Phrase.status` includes `"error"`**, set by `markPhraseError` when a phrase-scoped `ErrorOut` (`phrase_id` non-null) arrives. It preserves whatever source text the phrase's prior `transcript` events already established — the wire's `ErrorOut` carries no text at all, in either language — and explicitly clears the target slot plus `provider`/`latencyMs` to `null` rather than falling back to a stale provisional's values. `upsert`'s general merge (`mergePhrase`) only preserves whichever of `en`/`ko` a transcript update didn't just supply, plus `provider`/`latencyMs`, on an `"interim"` update; every other status (`provisional`, `final`, `error`) is a real update that replaces those fields outright, including replacing them with `null`.
+- **The presentation overlay does not share the terminal-only reveal.** `OverlayView.tsx` (via `lib/overlay.ts`'s `createOverlaySnapshot`) renders straight from `socket.phrases` — the last two phrases, unfiltered by `phraseDisplay.ts` — and still styles a non-`"final"` phrase as `is-provisional` with a direction-specific placeholder (`Direction.translatingPlaceholder`: "번역 중…" for en>ko, "Translating…" for ko>en). If `TRANSLATE_INTERIMS=true`, the overlay will still show that dimmed provisional stage even though the main transcript view never does. Keep this in mind if the overlay's display logic changes — the two are two independent readers of the same phrase stream, not one shared component. The direction itself travels **inside** `OverlaySnapshot` (not a separate channel), so it always arrives atomically with the phrases it describes.
 - **The "Finals only" UI toggle is gone.** It drove `translate_interims` for the current session, which the terminal-only reveal made meaningless to the user (provisional Korean was never shown either way). `TRANSLATE_INTERIMS` is env-only now. `sendConfig` no longer accepts a `translateInterims` field at all — the backend's `config` message handling for `translate_interims` is untouched and still reachable (by env restart, or by hand), only the frontend plumbing that sent it was removed.
 - `sendStart`/`sendConfig` **queue until the socket is open** and flush in order on `onopen`. `App` calls `connect()` then awaits `getUserMedia()`, so the socket usually opens first — but losing that race would throw `InvalidStateError` and silently kill the session.
 - **`connect()` clears the caption list.** Phrase IDs restart at 0 every session, so without the reset a restarted session's phrase 0 merges into the previous session's phrase 0 — stale Korean under new English, in solid final styling. `STATUS_RANK`'s strict `<` is correct and must stay; the reset is what makes it safe.
@@ -154,4 +165,4 @@ Documented in `README.md` under "Known limitations" — not oversights. Most rel
 ## Working in this repo
 
 - `docs/superpowers/specs/` holds the design doc (the binding authority) and `docs/superpowers/plans/` the implementation plan. When behavior and spec disagree, the spec wins or the spec should be amended — don't let them drift silently.
-- A **global** gitignore excludes `docs`, so this repo's `.gitignore` carries a `!docs/` negation. Don't remove it; `git add docs/...` will silently fail without it.
+- **`docs/` is intentionally untracked here.** A global gitignore excludes `docs`, and this repo's `.gitignore` re-affirms it (`docs/`, line 10) rather than negating it — specs and plans are written to disk and reviewed in place, never committed. `git add docs/...` will fail, and that is the intended behaviour: don't "fix" it with `!docs/` or `git add -f`. The same global gitignore also excludes `CLAUDE.md`, which is why this file needs the `!CLAUDE.md` negation — don't remove that one.

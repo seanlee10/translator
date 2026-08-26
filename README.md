@@ -164,6 +164,7 @@ touching code.
 | Variable | Default | Effect |
 |---|---|---|
 | `DEFAULT_PROVIDER` | `anthropic` | Which model (`anthropic`, `groq`, or `xai`) a new session starts with — falls back to the first configured provider (with a warning) if this one's key isn't set |
+| `DEFAULT_DIRECTION` | `en>ko` | Which way to translate when the browser doesn't say. `en>ko` or `ko>en`. |
 | `ANTHROPIC_MODEL` | `claude-haiku-4-5` | Claude model used for translation |
 | `GROQ_MODEL` | `qwen/qwen3.6-27b` | Groq model used for translation |
 | `XAI_MODEL` | `grok-4.20-0309-non-reasoning` | xAI Grok model used for translation |
@@ -224,7 +225,13 @@ final translation call itself do.
   not queue.)
 - **No hosting, authentication, or rate limiting.** This is a local
   single-user dev tool.
-- **English source, Korean target only.**
+- **Direction is fixed per session.** It is chosen before you start listening
+  and cannot be changed mid-session — Deepgram's language is set when the
+  stream opens and there is no reconnect path. Stop and start again to
+  switch.
+- **No language auto-detect.** The app transcribes the direction's source
+  language; speaking the other one produces nonsense rather than switching
+  automatically.
 - **`is_final` only.** Phrase boundaries rely on Deepgram's `is_final` flag,
   not `speech_final` / `UtteranceEnd`. If phrases run short in practice, tune
   `UTTERANCE_END_MS` before changing code.
