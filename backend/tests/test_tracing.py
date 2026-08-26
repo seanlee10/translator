@@ -213,6 +213,84 @@ def test_a_successful_phrase_span_is_marked_OK_not_left_unset():
     assert recorded["__status__"].status_code is StatusCode.ERROR
 
 
+# ---- phrase_span records phrase.direction when tracing is actually on ----
+#
+# RecordingTracer (below) fakes the trace_phrase seam pipeline.py consumes —
+# it stands in *for* phrase_span, so it can't be used to test phrase_span
+# itself. What's needed here is a fake of the OTel tracer phrase_span calls
+# into. The existing precedent for that is the inline FakeSpan class in
+# test_a_successful_phrase_span_is_marked_OK_not_left_unset just above:
+# a plain object recording set_attribute calls into a dict. fake_tracer
+# extends that same minimal style to also fake start_as_current_span, so a
+# test can install it as tracing._tracer and inspect what phrase_span wrote.
+
+
+class _FakeSpan:
+    def __init__(self):
+        self.attributes: dict[str, object] = {}
+
+    def set_attribute(self, key, value):
+        self.attributes[key] = value
+
+    def set_status(self, status):
+        self.attributes["__status__"] = status
+
+    def record_exception(self, exc):
+        self.attributes["__exc__"] = exc
+
+
+class _FakeTracer:
+    def __init__(self):
+        self.finished_spans: list[_FakeSpan] = []
+
+    @contextmanager
+    def start_as_current_span(self, name):
+        span = _FakeSpan()
+        try:
+            yield span
+        finally:
+            self.finished_spans.append(span)
+
+
+@pytest.fixture
+def fake_tracer():
+    tracing.reset_for_tests()
+    fake = _FakeTracer()
+    tracing._tracer = fake
+    yield fake
+    tracing.reset_for_tests()
+
+
+def test_phrase_span_is_a_no_op_with_the_direction_argument_when_tracing_is_off():
+    # Tracing off is the normal case for tests and for anyone without keys.
+    # The extra argument must not make the null path raise.
+    tracing.reset_for_tests()
+    with tracing.phrase_span(0, "안녕하세요", 900, "ko>en") as span:
+        span.set_translation("hello there", "anthropic", 120)
+        span.set_error(RuntimeError("boom"))
+
+
+def test_phrase_span_records_the_direction_when_tracing_is_on(fake_tracer):
+    with tracing.phrase_span(3, "안녕하세요", 900, "ko>en"):
+        pass
+
+    attributes = fake_tracer.finished_spans[-1].attributes
+    # Latency and quality are not comparable across directions, so every
+    # Arize widget that aggregates over the project needs this to filter on
+    # — otherwise it silently averages two different tasks together.
+    assert attributes["phrase.direction"] == "ko>en"
+    assert attributes["phrase.id"] == 3
+    assert attributes["phrase.speech_ms"] == 900
+
+
+def test_the_span_input_is_the_source_text_in_either_direction(fake_tracer):
+    with tracing.phrase_span(0, "안녕하세요", 500, "ko>en"):
+        pass
+    attributes = fake_tracer.finished_spans[-1].attributes
+    assert attributes["input.value"] == "안녕하세요"
+    assert attributes["input.audio.transcript"] == "안녕하세요"
+
+
 # ---- the null span honours the same interface ----
 
 
@@ -238,8 +316,8 @@ class RecordingSpan:
         self.translations: list[tuple[str, str, int]] = []
         self.errors: list[BaseException] = []
 
-    def set_translation(self, ko, provider, latency_ms):
-        self.translations.append((ko, provider, latency_ms))
+    def set_translation(self, text, provider, latency_ms):
+        self.translations.append((text, provider, latency_ms))
 
     def set_error(self, exc):
         self.errors.append(exc)
