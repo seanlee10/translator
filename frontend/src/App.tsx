@@ -3,7 +3,12 @@ import "./App.css";
 import { Controls } from "./components/Controls";
 import { OverlayView } from "./components/OverlayView";
 import { TranscriptView } from "./components/TranscriptView";
-import { DEFAULT_DIRECTION, type DirectionId } from "./directions";
+import {
+  DEFAULT_DIRECTION,
+  directionById,
+  displayDirection,
+  type DirectionId,
+} from "./directions";
 import { useAudioCapture } from "./hooks/useAudioCapture";
 import { useCaptionSocket } from "./hooks/useCaptionSocket";
 import { useProviders } from "./hooks/useProviders";
@@ -177,6 +182,18 @@ function ControlCenter() {
 
   const visibleError = audio.error ?? socket.error;
 
+  // No phrases on screen yet: nothing to mislabel, so show the PENDING
+  // selection (otherwise the empty state tells the user to speak the wrong
+  // language). Once phrases exist, they must stay read under the direction
+  // their session actually ran in. Safe because the toggle is disabled
+  // while a session is active — pending and session direction can only
+  // diverge while stopped. See directions.ts's displayDirection.
+  const shownDirection = displayDirection(
+    socket.phrases.length,
+    directionById(direction),
+    socket.direction,
+  );
+
   return (
     <main className="app-shell">
       <div className="ambient ambient-one" />
@@ -192,8 +209,8 @@ function ControlCenter() {
           <div>
             <p className="eyebrow">LIVE INTERPRETATION STUDIO</p>
             <h1>
-              {socket.direction.sourceLabel} <span>→</span>{" "}
-              {socket.direction.targetLabel}
+              {shownDirection.sourceLabel} <span>→</span>{" "}
+              {shownDirection.targetLabel}
             </h1>
           </div>
         </div>
@@ -231,7 +248,7 @@ function ControlCenter() {
           phrases={socket.phrases}
           fontSize={fontSize}
           providers={providers}
-          direction={socket.direction}
+          direction={shownDirection}
         />
         <Controls
           active={audio.active}

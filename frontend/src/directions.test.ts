@@ -3,6 +3,7 @@ import {
   DEFAULT_DIRECTION,
   DIRECTIONS,
   directionById,
+  displayDirection,
   sourceTextOf,
   targetTextOf,
 } from "./directions";
@@ -75,5 +76,34 @@ describe("reading a phrase by role", () => {
     const p = phrase({ en: null, status: "interim" });
     expect(sourceTextOf(p, d)).toBe("안녕하세요");
     expect(targetTextOf(p, d)).toBeNull();
+  });
+});
+
+describe("displayDirection", () => {
+  it("shows the pending selection when no phrases are on screen", () => {
+    const pending = directionById("ko>en");
+    const session = directionById("en>ko");
+    expect(displayDirection(0, pending, session)).toBe(pending);
+  });
+
+  it("shows the session direction once phrases exist, pending ko>en / session en>ko", () => {
+    const pending = directionById("ko>en");
+    const session = directionById("en>ko");
+    expect(displayDirection(1, pending, session)).toBe(session);
+  });
+
+  it("shows the session direction once phrases exist, the reverse ordering", () => {
+    // Same assertion with the two directions swapped between the pending and
+    // session arguments, so a swapped-argument bug in the implementation
+    // (returning `pending` instead of `session`, or vice versa) fails.
+    const pending = directionById("en>ko");
+    const session = directionById("ko>en");
+    expect(displayDirection(2, pending, session)).toBe(session);
+  });
+
+  it("treats any nonzero phrase count the same as one", () => {
+    const pending = directionById("en>ko");
+    const session = directionById("ko>en");
+    expect(displayDirection(5, pending, session)).toBe(session);
   });
 });

@@ -72,3 +72,22 @@ export function targetTextOf(
 ): string | null {
   return direction.targetLang === "en" ? phrase.en : phrase.ko;
 }
+
+/**
+ * Which direction the transcript header and empty state should describe.
+ *
+ * With no phrases on screen there is nothing to mislabel, so show the
+ * PENDING selection — otherwise the empty state tells the user to speak the
+ * wrong language. Once phrases exist they must be read under the direction
+ * their session actually ran in, or every column swaps.
+ *
+ * Safe because the direction toggle is disabled while a session is active:
+ * pending and session direction can only diverge while stopped.
+ */
+export function displayDirection(
+  phraseCount: number,
+  pending: DirectionInfo,
+  session: DirectionInfo,
+): DirectionInfo {
+  return phraseCount === 0 ? pending : session;
+}
