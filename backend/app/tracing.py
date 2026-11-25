@@ -119,7 +119,7 @@ def tracing_enabled() -> bool:
 class _NullSpan:
     """What callers get whenever tracing is off. Same shape, no cost."""
 
-    def set_translation(self, ko: str, provider: str, latency_ms: int) -> None:
+    def set_translation(self, text: str, provider: str, latency_ms: int) -> None:
         pass
 
     def set_error(self, exc: BaseException) -> None:
@@ -130,8 +130,8 @@ class _PhraseSpan:
     def __init__(self, span) -> None:
         self._span = span
 
-    def set_translation(self, ko: str, provider: str, latency_ms: int) -> None:
-        self._span.set_attribute(_OUTPUT_VALUE, ko)
+    def set_translation(self, text: str, provider: str, latency_ms: int) -> None:
+        self._span.set_attribute(_OUTPUT_VALUE, text)
         self._span.set_attribute("translation.provider", provider)
         self._span.set_attribute("translation.latency_ms", latency_ms)
         # Success has to be stated. An OTel span defaults to UNSET, not OK,
@@ -248,7 +248,9 @@ def shutdown_tracing() -> None:
 
 
 @contextmanager
-def phrase_span(phrase_id: int, text: str, speech_ms: int) -> Iterator[object]:
+def phrase_span(
+    phrase_id: int, text: str, speech_ms: int, direction_id: str
+) -> Iterator[object]:
     """One span tree per finalized phrase. A no-op when tracing is off.
 
     The provider instrumentor's LLM span lands inside this one because
@@ -267,6 +269,10 @@ def phrase_span(phrase_id: int, text: str, speech_ms: int) -> Iterator[object]:
         # the closest thing to an audio duration the app can honestly report,
         # since it never holds the audio itself.
         chain.set_attribute("phrase.speech_ms", speech_ms)
+        # Latency and quality are not comparable across directions: a widget
+        # that aggregates the project without filtering on this is averaging
+        # two different tasks.
+        chain.set_attribute("phrase.direction", direction_id)
         # The transcript rides on the phrase span rather than on a child of
         # its own. A separate "transcription" span was tried and removed:
         # the transcription happens upstream in Deepgram and the pipeline

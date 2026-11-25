@@ -36,14 +36,16 @@ class FakeSource:
     script: list[TranscriptEvent] = []
     gate_after: dict[int, int] = {}
     last_sample_rate: int | None = None
+    last_direction = None
     fail_after: Exception | None = None
     # events() returns instead of idling — a clean Deepgram close (code 1000).
     end_after_script: bool = False
     # connect() raises — the most common first-run failure, a bad API key.
     connect_error: Exception | None = None
 
-    def __init__(self, settings, sample_rate):
+    def __init__(self, settings, sample_rate, direction):
         FakeSource.last_sample_rate = sample_rate
+        FakeSource.last_direction = direction
         self.audio_chunks: list[bytes] = []
         self._chunk_count = 0
         self._chunk_event = asyncio.Event()
@@ -85,8 +87,9 @@ class FakeRouter:
 
     last: "FakeRouter | None" = None
 
-    def __init__(self, settings):
+    def __init__(self, settings, direction):
         self.provider = "anthropic"
+        self.direction = direction
         FakeRouter.last = self
 
     def set_provider(self, name):
@@ -95,7 +98,7 @@ class FakeRouter:
         self.provider = name
 
     async def translate(self, text, context):
-        return TranslationResult(ko=f"[{self.provider}]{text}", provider=self.provider, latency_ms=7)
+        return TranslationResult(text=f"[{self.provider}]{text}", provider=self.provider, latency_ms=7)
 
 
 def build_client(**settings_overrides):
@@ -105,6 +108,7 @@ def build_client(**settings_overrides):
     # this, last_sample_rate/fail_after leak across tests and only happen
     # to pass because the asserted values differ from test to test.
     FakeSource.last_sample_rate = None
+    FakeSource.last_direction = None
     FakeSource.script = []
     FakeSource.gate_after = {}
     FakeSource.fail_after = None
@@ -150,8 +154,8 @@ def test_providers_endpoint_returns_all_three_when_all_keys_are_configured():
     assert {p["id"] for p in body} == {"anthropic", "groq", "xai"}
     assert {
         "id": "anthropic",
-        "label": "Claude Haiku 4.5",
-        "model": "claude-haiku-4-5",
+        "label": "Claude Haiku 5.5",
+        "model": "claude-haiku-5-5",
     } in body
 
 
@@ -188,6 +192,8 @@ def test_a_scripted_utterance_produces_transcript_then_caption():
             "type": "transcript",
             "phrase_id": 0,
             "en": "hel",
+            "ko": None,
+            "zh": None,
             "status": "interim",
         }
         # The final's English is published before it is enqueued for
@@ -197,6 +203,8 @@ def test_a_scripted_utterance_produces_transcript_then_caption():
             "type": "transcript",
             "phrase_id": 0,
             "en": "hello there",
+            "ko": None,
+            "zh": None,
             "status": "interim",
         }
         assert ws.receive_json() == {
@@ -204,6 +212,7 @@ def test_a_scripted_utterance_produces_transcript_then_caption():
             "phrase_id": 0,
             "en": "hello there",
             "ko": "[anthropic]hello there",
+            "zh": None,
             "status": "final",
             "provider": "anthropic",
             "latency_ms": 7,
@@ -308,6 +317,8 @@ def test_the_translate_interims_toggle_actually_changes_behavior():
             "type": "transcript",
             "phrase_id": 0,
             "en": "hel",
+            "ko": None,
+            "zh": None,
             "status": "interim",
         }
 
@@ -323,6 +334,7 @@ def test_the_translate_interims_toggle_actually_changes_behavior():
         "phrase_id": 0,
         "en": "hello",
         "ko": "[anthropic]hello",
+        "zh": None,
         "status": "final",
         "provider": "anthropic",
         "latency_ms": 7,
@@ -504,6 +516,8 @@ def test_translate_interims_false_as_a_json_string_is_not_truthy():
             "type": "transcript",
             "phrase_id": 0,
             "en": "hel",
+            "ko": None,
+            "zh": None,
             "status": "interim",
         }
 
@@ -550,3 +564,115 @@ def test_stop_still_translates_the_last_phrase_before_shutting_down():
     assert caption["type"] == "caption"
     assert caption["status"] == "final"
     assert caption["ko"] == "[anthropic]goodbye"
+
+
+# ---- direction selection at 'start' ----
+
+
+def test_start_without_a_direction_uses_the_server_default():
+    client = build_client(default_direction="ko>en")
+
+    with client.websocket_connect("/ws/session") as ws:
+        ws.receive_json()  # connected
+        ws.send_json({"type": "start", "sample_rate": 16000})
+        ws.receive_json()  # listening
+
+    assert FakeSource.last_direction.id == "ko>en"
+
+
+def test_start_with_a_direction_overrides_the_server_default():
+    client = build_client(default_direction="en>ko")
+
+    with client.websocket_connect("/ws/session") as ws:
+        ws.receive_json()  # connected
+        ws.send_json(
+            {"type": "start", "sample_rate": 16000, "direction": "ko>en"}
+        )
+        ws.receive_json()  # listening
+
+    assert FakeSource.last_direction.id == "ko>en"
+
+
+def test_an_unknown_direction_warns_but_still_opens_the_session():
+    # Never cost the user their session over a bad field: the same posture
+    # _default_router_factory takes when DEFAULT_PROVIDER names a provider
+    # whose key is not configured.
+    client = build_client(default_direction="en>ko")
+
+    with client.websocket_connect("/ws/session") as ws:
+        ws.receive_json()  # connected
+        ws.send_json(
+            {"type": "start", "sample_rate": 16000, "direction": "fr>en"}
+        )
+        messages = [ws.receive_json(), ws.receive_json()]
+
+    errors = [m for m in messages if m["type"] == "error"]
+    assert errors, "the user must be told the direction was ignored"
+    assert errors[0]["fatal"] is False
+    assert "fr>en" in errors[0]["message"]
+    assert any(
+        m["type"] == "status" and m["state"] == "listening" for m in messages
+    )
+    assert FakeSource.last_direction.id == "en>ko"
+
+
+def test_direction_cannot_be_changed_mid_session():
+    # Deepgram's language is fixed at connect time and this app has no
+    # reconnect path, so a mid-session switch would silently keep
+    # transcribing the old language. Say so instead of pretending.
+    client = build_client(default_direction="en>ko")
+
+    with client.websocket_connect("/ws/session") as ws:
+        ws.receive_json()  # connected
+        ws.send_json({"type": "start", "sample_rate": 16000})
+        ws.receive_json()  # listening
+        ws.send_json({"type": "config", "direction": "ko>en"})
+        message = ws.receive_json()
+
+    assert message["type"] == "error"
+    assert message["fatal"] is False
+    assert "restart" in message["message"].lower()
+    assert FakeSource.last_direction.id == "en>ko"
+
+
+def test_config_still_accepts_provider_alongside_a_rejected_direction():
+    # A rejected direction must not abort the rest of the config message.
+    client = build_client(default_direction="en>ko")
+
+    with client.websocket_connect("/ws/session") as ws:
+        ws.receive_json()  # connected
+        ws.send_json({"type": "start", "sample_rate": 16000})
+        ws.receive_json()  # listening
+        ws.send_json(
+            {"type": "config", "direction": "ko>en", "provider": "groq"}
+        )
+        ws.receive_json()  # the direction-rejection error
+
+    assert FakeRouter.last.provider == "groq"
+
+
+def test_an_english_to_chinese_session_captions_into_the_zh_slot():
+    client = build_client(translate_interims=False)
+    FakeSource.script = [
+        TranscriptEvent(phrase_id=0, text="hello there", is_final=True),
+    ]
+
+    with client.websocket_connect("/ws/session") as ws:
+        ws.receive_json()  # connected
+        ws.send_json({"type": "start", "sample_rate": 48000, "direction": "en>zh"})
+        ws.receive_json()  # listening
+        ws.send_bytes(b"\x00\x01" * 160)
+
+        transcript = ws.receive_json()
+        assert (transcript["en"], transcript["ko"], transcript["zh"]) == (
+            "hello there", None, None,
+        )
+        caption = ws.receive_json()
+        assert caption["type"] == "caption"
+        assert caption["en"] == "hello there"
+        assert caption["ko"] is None
+        assert caption["zh"] == "[anthropic]hello there"
+
+    # English is still what Deepgram listens for.
+    assert FakeSource.last_direction.id == "en>zh"
+    assert FakeSource.last_direction.deepgram_language == "en"

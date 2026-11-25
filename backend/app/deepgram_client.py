@@ -6,6 +6,7 @@ from deepgram import AsyncDeepgramClient
 from deepgram.core.events import EventType
 
 from app.config import Settings
+from app.direction import Direction
 from app.models import TranscriptEvent
 
 logger = logging.getLogger(__name__)
@@ -21,11 +22,16 @@ class DeepgramStreamError(RuntimeError):
     as opposed to a graceful close."""
 
 
-def connect_params(settings: Settings, sample_rate: int) -> dict[str, str]:
+def connect_params(
+    settings: Settings, sample_rate: int, direction: Direction
+) -> dict[str, str]:
     """Every value is a string — the SDK types these as Optional[str]."""
     return {
         "model": settings.deepgram_model,
-        "language": "en",
+        # The direction decides what we are listening to, not what we are
+        # producing. nova-3 supports Korean streaming, so the model is the
+        # same either way and only this value changes.
+        "language": direction.deepgram_language,
         "encoding": "linear16",
         "sample_rate": str(sample_rate),
         "channels": "1",
@@ -87,9 +93,12 @@ class PhraseTracker:
 class DeepgramSource:
     """Adapts the SDK's callback API to an async iterator of TranscriptEvents."""
 
-    def __init__(self, settings: Settings, sample_rate: int) -> None:
+    def __init__(
+        self, settings: Settings, sample_rate: int, direction: Direction
+    ) -> None:
         self._settings = settings
         self._sample_rate = sample_rate
+        self._direction = direction
         self._tracker = PhraseTracker()
         self._queue: asyncio.Queue[TranscriptEvent | None] = asyncio.Queue()
         self._client = AsyncDeepgramClient(api_key=settings.deepgram_api_key)
@@ -101,7 +110,7 @@ class DeepgramSource:
 
     async def connect(self) -> None:
         self._ctx = self._client.listen.v1.connect(
-            **connect_params(self._settings, self._sample_rate)
+            **connect_params(self._settings, self._sample_rate, self._direction)
         )
         self._connection = await self._ctx.__aenter__()
 

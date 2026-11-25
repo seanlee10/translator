@@ -9,6 +9,7 @@ from typing import Awaitable, Callable, ContextManager, Iterator, Protocol, Sequ
 from pydantic import BaseModel
 
 from app.config import Settings
+from app.direction import Direction
 from app.models import (
     CaptionOut,
     ContextPair,
@@ -33,13 +34,13 @@ class PhraseSpan(Protocol):
     knows nothing about spans, exporters, or attribute names.
     """
 
-    def set_translation(self, ko: str, provider: str, latency_ms: int) -> None: ...
+    def set_translation(self, text: str, provider: str, latency_ms: int) -> None: ...
 
     def set_error(self, exc: BaseException) -> None: ...
 
 
 class _NullPhraseSpan:
-    def set_translation(self, ko: str, provider: str, latency_ms: int) -> None:
+    def set_translation(self, text: str, provider: str, latency_ms: int) -> None:
         pass
 
     def set_error(self, exc: BaseException) -> None:
@@ -48,7 +49,7 @@ class _NullPhraseSpan:
 
 @contextmanager
 def null_trace_phrase(
-    phrase_id: int, text: str, speech_ms: int
+    phrase_id: int, text: str, speech_ms: int, direction_id: str
 ) -> Iterator[PhraseSpan]:
     """The default. Tracing is injected, never imported.
 
@@ -60,7 +61,7 @@ def null_trace_phrase(
     yield _NullPhraseSpan()
 
 
-TracePhrase = Callable[[int, str, int], ContextManager[PhraseSpan]]
+TracePhrase = Callable[[int, str, int, str], ContextManager[PhraseSpan]]
 
 
 @dataclass
@@ -83,12 +84,14 @@ class Pipeline:
         translate: Translate,
         emit: Emit,
         settings: Settings,
+        direction: Direction,
         now: Callable[[], float] = time.monotonic,
         trace_phrase: TracePhrase = null_trace_phrase,
     ) -> None:
         self._translate = translate
         self._emit = emit
         self._s = settings
+        self._direction = direction
         self._now = now
         self._trace_phrase = trace_phrase
         self._translate_interims = settings.translate_interims
@@ -118,17 +121,19 @@ class Pipeline:
             state = PhraseState(created_at=self._now())
             self._phrases[event.phrase_id] = state
 
-        await self._emit(TranscriptOut(phrase_id=event.phrase_id, en=event.text))
+        slots = self._direction.to_slots(event.text, None)
+        await self._emit(TranscriptOut(phrase_id=event.phrase_id, **slots))
 
         if event.is_final:
-            # The English is published for finals too, *before* the
-            # translation is enqueued. Otherwise a finalized phrase reaches
-            # the browser only inside a successful CaptionOut, and a failed
-            # translation leaves no row at all — just a global error banner.
-            # The spec requires the phrase be published with its English and
-            # an error marker. The client's rank guard treats this as an
-            # interim, so it refines the English of an already-displayed
-            # provisional without regressing its status or blanking Korean.
+            # The source-language text is published for finals too, *before*
+            # the translation is enqueued. Otherwise a finalized phrase
+            # reaches the browser only inside a successful CaptionOut, and a
+            # failed translation leaves no row at all — just a global error
+            # banner. The spec requires the phrase be published with its
+            # source text and an error marker. The client's rank guard
+            # treats this as an interim, so it refines the source-language
+            # text of an already-displayed provisional without regressing
+            # its status or blanking the translation.
             state.closed = True
             await self._final_queue.put((event.phrase_id, event.text))
             return
@@ -150,7 +155,9 @@ class Pipeline:
                 )
                 # The translation is awaited inside this block so the
                 # provider SDK's own span nests under the phrase.
-                with self._trace_phrase(phrase_id, text, speech_ms) as span:
+                with self._trace_phrase(
+                    phrase_id, text, speech_ms, self._direction.id
+                ) as span:
                     try:
                         result = await self._translate_final(text)
                     except (
@@ -165,15 +172,16 @@ class Pipeline:
                         )
                     else:
                         span.set_translation(
-                            result.ko, result.provider, result.latency_ms
+                            result.text, result.provider, result.latency_ms
                         )
-                        self._context.append(ContextPair(en=text, ko=result.ko))
+                        self._context.append(
+                            ContextPair(source=text, target=result.text)
+                        )
                         async with self._emit_lock:
                             await self._emit(
                                 CaptionOut(
                                     phrase_id=phrase_id,
-                                    en=text,
-                                    ko=result.ko,
+                                    **self._direction.to_slots(text, result.text),
                                     status="final",
                                     provider=result.provider,
                                     latency_ms=result.latency_ms,
@@ -244,8 +252,7 @@ class Pipeline:
             await self._emit(
                 CaptionOut(
                     phrase_id=event.phrase_id,
-                    en=event.text,
-                    ko=result.ko,
+                    **self._direction.to_slots(event.text, result.text),
                     status="provisional",
                     provider=result.provider,
                     latency_ms=result.latency_ms,

@@ -3,22 +3,48 @@ import time
 from typing import Callable, Protocol, Sequence
 
 from app.config import Settings
+from app.direction import Direction
 from app.models import ContextPair, ProviderName, TranslationResult
 
-SYSTEM_TEMPLATE = """You translate live English speech captions into Korean.
+SYSTEM_TEMPLATE = """You translate live {source_label} speech captions into \
+{target_label}.
 
 Rules:
-- Output ONLY the Korean translation. No preamble, no quotes, no commentary, \
-no romanization, no explanation.
+- Output ONLY the {target_label} translation. No preamble, no quotes, no \
+commentary, no romanization, no explanation.
 - The input may be an unfinished fragment of a sentence. Translate it AS a \
 fragment. Never invent or complete the rest of the sentence.
 - Preserve proper nouns, product names, and acronyms.
-- Use the {register} speech level consistently.
-- Recent context is provided only to keep terminology and register consistent. \
-Do not translate the context; translate only the final line.
+{register_rule}{target_rule}- Recent context is provided only to keep terminology and \
+register consistent. Do not translate the context; translate only the final \
+line.
 """
 
-_LABEL_PREFIXES = ("korean:", "translation:", "번역:", "한국어:")
+_REGISTER_RULE = "- Use the {register} speech level consistently.\n"
+
+# Models label their output in the TARGET language, so both sides are needed:
+# "한국어:" only ever appears going into Korean, "English:" only going into
+# English, the Chinese ones only going into Chinese. "translation:" is
+# direction-neutral. Longer prefixes come before their own prefixes
+# ("traditional chinese:" before "chinese:") so the whole label is stripped.
+# Full-width colons are listed too: Chinese output often uses "：".
+_LABEL_PREFIXES = (
+    "korean:",
+    "english:",
+    "traditional chinese (taiwan):",
+    "traditional chinese:",
+    "chinese:",
+    "translation:",
+    "번역:",
+    "한국어:",
+    "영어:",
+    "繁體中文:",
+    "繁體中文：",
+    "中文:",
+    "中文：",
+    "翻譯:",
+    "翻譯：",
+)
 _QUOTE_PAIRS = {'"': '"', "'": "'", "“": "”", "‘": "’"}
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _CLEAN_PASSES = 3
@@ -32,16 +58,37 @@ class Provider(Protocol):
     async def complete(self, system: str, prompt: str) -> str: ...
 
 
-def build_system_prompt(settings: Settings) -> str:
-    return SYSTEM_TEMPLATE.format(register=settings.korean_register)
+def build_system_prompt(settings: Settings, direction: Direction) -> str:
+    # The register steers Korean speech level, so it is included only when
+    # Korean is the side being produced. English has no equivalent axis and
+    # gets no substitute instruction — models default to neutral
+    # contemporary English, which is what a caption wants.
+    register_rule = (
+        _REGISTER_RULE.format(register=settings.korean_register)
+        if direction.applies_register
+        else ""
+    )
+    return SYSTEM_TEMPLATE.format(
+        source_label=direction.source_label,
+        target_label=direction.target_label,
+        register_rule=register_rule,
+        target_rule=direction.target_rule,
+    )
 
 
-def build_user_prompt(text: str, context: Sequence[ContextPair]) -> str:
+def build_user_prompt(
+    text: str, context: Sequence[ContextPair], direction: Direction
+) -> str:
     parts: list[str] = []
     if context:
-        lines = "\n".join(f"EN: {p.en}\nKO: {p.ko}" for p in context)
+        # Ordered source-then-target: the model reads the pair in the same
+        # order it is being asked to produce one. Tags name the LANGUAGE
+        # (EN:/KO:/ZH:), taken from the direction's slots.
+        src = direction.source_slot.upper()
+        tgt = direction.target_slot.upper()
+        lines = "\n".join(f"{src}: {p.source}\n{tgt}: {p.target}" for p in context)
         parts.append(f"Recent context (do not translate):\n{lines}")
-    parts.append(f"Translate this line to Korean:\n{text}")
+    parts.append(f"Translate this line to {direction.target_label}:\n{text}")
     return "\n\n".join(parts)
 
 
@@ -99,12 +146,14 @@ class TranslatorRouter:
         providers: dict[ProviderName, Provider],
         default: ProviderName | None,
         settings: Settings,
+        direction: Direction,
         now: Callable[[], float] = time.monotonic,
     ) -> None:
         self._providers = providers
         self._settings = settings
+        self._direction = direction
         self._now = now
-        self._system = build_system_prompt(settings)
+        self._system = build_system_prompt(settings, direction)
         # default=None means no provider is configured at all (see
         # main.py's _default_router_factory): the session must still open,
         # it just cannot translate until one is available.
@@ -133,12 +182,12 @@ class TranslatorRouter:
             # simply unavailable this session.
             raise RuntimeError("no translation provider is configured")
         provider = self._providers[self._current]
-        prompt = build_user_prompt(text, context)
+        prompt = build_user_prompt(text, context, self._direction)
 
         started = self._now()
         raw = await provider.complete(self._system, prompt)
         elapsed_ms = int((self._now() - started) * 1000)
 
         return TranslationResult(
-            ko=clean_output(raw), provider=provider.name, latency_ms=elapsed_ms
+            text=clean_output(raw), provider=provider.name, latency_ms=elapsed_ms
         )

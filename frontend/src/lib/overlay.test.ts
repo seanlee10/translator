@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Phrase } from "../hooks/useCaptionSocket";
+import { directionById, targetTextOf } from "../directions";
 import {
   createOverlaySnapshot,
   selectOverlayPhrases,
@@ -41,6 +42,7 @@ describe("createOverlaySnapshot", () => {
       [phrase(1), phrase(2), phrase(3)],
       "listening",
       28,
+      "en>ko",
     );
 
     expect(snapshot).toEqual({
@@ -48,6 +50,36 @@ describe("createOverlaySnapshot", () => {
       phrases: [phrase(2), phrase(3)],
       status: "listening",
       fontSize: 28,
+      direction: "en>ko",
     });
+  });
+
+  it("carries a phrase whose target has not arrived yet", () => {
+    // The overlay is an INDEPENDENT reader of the same phrase stream — it is
+    // not filtered by phraseDisplay.ts and still shows the dimmed provisional
+    // stage. It therefore has to cope with a null target slot on its own.
+    const snapshot = createOverlaySnapshot(
+      [{
+        phraseId: 0, en: null, ko: "안녕하세요", status: "interim",
+        provider: null, latencyMs: null, errorMessage: null,
+      }],
+      "listening",
+      32,
+      "ko>en",
+    );
+    expect(snapshot.phrases).toHaveLength(1);
+    expect(targetTextOf(snapshot.phrases[0], directionById("ko>en"))).toBeNull();
+  });
+
+  it("carries the direction the session actually started with, through the snapshot", () => {
+    // This is the coverage a localStorage-based bridge could not provide:
+    // direction travels atomically with the phrases it describes, in the
+    // same message, rather than over a separate channel that could go
+    // stale relative to them.
+    const koToEn = createOverlaySnapshot([phrase(1)], "listening", 28, "ko>en");
+    expect(koToEn.direction).toBe("ko>en");
+
+    const enToKo = createOverlaySnapshot([phrase(1)], "listening", 28, "en>ko");
+    expect(enToKo.direction).toBe("en>ko");
   });
 });

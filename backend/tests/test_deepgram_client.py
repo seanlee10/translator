@@ -11,6 +11,7 @@ from app.deepgram_client import (
     connect_params,
     message_to_dict,
 )
+from app.direction import EN_TO_KO, KO_TO_EN
 
 
 def make_settings(**overrides) -> Settings:
@@ -27,7 +28,7 @@ def make_settings(**overrides) -> Settings:
 
 
 def test_connect_params_include_everything_the_policy_depends_on():
-    params = connect_params(make_settings(), sample_rate=48000)
+    params = connect_params(make_settings(), 48000, EN_TO_KO)
 
     assert params["model"] == "nova-3"
     assert params["language"] == "en"
@@ -41,14 +42,42 @@ def test_connect_params_include_everything_the_policy_depends_on():
 def test_every_connect_param_is_a_string():
     # The SDK types all of these as Optional[str]; passing True or 16000
     # fails confusingly at request time.
-    params = connect_params(make_settings(), sample_rate=48000)
+    params = connect_params(make_settings(), 48000, EN_TO_KO)
 
     assert all(isinstance(v, str) for v in params.values()), params
 
 
 def test_sample_rate_comes_from_the_browser_not_from_settings():
-    params = connect_params(make_settings(sample_rate=16000), sample_rate=44100)
+    params = connect_params(make_settings(sample_rate=16000), 44100, EN_TO_KO)
     assert params["sample_rate"] == "44100"
+
+
+@pytest.mark.parametrize(
+    "direction,expected_language",
+    [(EN_TO_KO, "en"), (KO_TO_EN, "ko")],
+)
+def test_connect_params_transcribes_the_source_language(direction, expected_language):
+    params = connect_params(make_settings(), 48000, direction)
+    assert params["language"] == expected_language
+
+
+@pytest.mark.parametrize("direction", [EN_TO_KO, KO_TO_EN])
+def test_every_connect_param_is_a_string_in_both_directions(direction):
+    # The SDK types every one of these Optional[str]. Passing True or 16000
+    # fails confusingly at request time rather than here.
+    params = connect_params(make_settings(), 48000, direction)
+    for key, value in params.items():
+        assert isinstance(value, str), f"{key} is {type(value).__name__}, not str"
+
+
+@pytest.mark.parametrize("direction", [EN_TO_KO, KO_TO_EN])
+def test_direction_changes_only_the_language_param(direction):
+    # Guards against a well-meaning "Korean needs a different model" edit:
+    # nova-3 supports Korean streaming, so nothing else should vary.
+    base = connect_params(make_settings(), 48000, EN_TO_KO)
+    other = connect_params(make_settings(), 48000, direction)
+    differing = {k for k in base if base[k] != other[k]}
+    assert differing <= {"language"}
 
 
 def results(transcript: str, is_final: bool) -> dict:
@@ -125,7 +154,7 @@ def test_message_to_dict_accepts_pydantic_dataclass_and_plain_dict():
 
 
 async def test_a_message_pushed_through_on_message_surfaces_from_events():
-    source = DeepgramSource(make_settings(), 16000)
+    source = DeepgramSource(make_settings(), 16000, EN_TO_KO)
 
     await source._on_message(results("hello", False))
     await source._on_close()
@@ -141,7 +170,7 @@ async def test_a_message_pushed_through_on_message_surfaces_from_events():
 
 
 async def test_messages_dropped_by_the_phrase_tracker_produce_no_event():
-    source = DeepgramSource(make_settings(), 16000)
+    source = DeepgramSource(make_settings(), 16000, EN_TO_KO)
 
     await source._on_message({"type": "Metadata"})  # non-Results: dropped
     await source._on_message(results("", True))  # empty transcript: dropped
@@ -155,7 +184,7 @@ async def test_messages_dropped_by_the_phrase_tracker_produce_no_event():
 
 
 async def test_events_terminates_cleanly_after_on_close_rather_than_hanging():
-    source = DeepgramSource(make_settings(), 16000)
+    source = DeepgramSource(make_settings(), 16000, EN_TO_KO)
     await source._on_close()
 
     async def drain():
@@ -168,7 +197,7 @@ async def test_events_terminates_cleanly_after_on_close_rather_than_hanging():
 
 
 async def test_aclose_is_safe_to_call_twice_and_before_connect():
-    source = DeepgramSource(make_settings(), 16000)
+    source = DeepgramSource(make_settings(), 16000, EN_TO_KO)
 
     # Never connected: _listener and _ctx are both still None.
     await source.aclose()
@@ -177,7 +206,7 @@ async def test_aclose_is_safe_to_call_twice_and_before_connect():
 
 
 async def test_on_error_causes_events_to_raise_deepgram_stream_error():
-    source = DeepgramSource(make_settings(), 16000)
+    source = DeepgramSource(make_settings(), 16000, EN_TO_KO)
 
     await source._on_error(RuntimeError("boom"))
 
@@ -187,7 +216,7 @@ async def test_on_error_causes_events_to_raise_deepgram_stream_error():
 
 
 async def test_a_graceful_close_terminates_without_raising():
-    source = DeepgramSource(make_settings(), 16000)
+    source = DeepgramSource(make_settings(), 16000, EN_TO_KO)
 
     await source._on_close()
 
@@ -197,7 +226,7 @@ async def test_a_graceful_close_terminates_without_raising():
 
 
 async def test_events_already_queued_are_yielded_before_the_error_is_raised():
-    source = DeepgramSource(make_settings(), 16000)
+    source = DeepgramSource(make_settings(), 16000, EN_TO_KO)
 
     await source._on_message(results("hello", False))
     await source._on_message(results("hello there", True))
@@ -237,7 +266,7 @@ async def test_the_sdk_exposes_only_a_manual_keepalive():
 async def test_keepalive_is_sent_repeatedly_while_connected(monkeypatch):
     monkeypatch.setattr("app.deepgram_client.KEEPALIVE_INTERVAL_S", 0.01)
 
-    source = DeepgramSource(make_settings(), 16000)
+    source = DeepgramSource(make_settings(), 16000, EN_TO_KO)
     connection = FakeConnection()
     source._connection = connection
 
@@ -259,7 +288,7 @@ async def test_the_keepalive_interval_is_five_seconds():
 async def test_aclose_cancels_the_keepalive_task(monkeypatch):
     monkeypatch.setattr("app.deepgram_client.KEEPALIVE_INTERVAL_S", 0.01)
 
-    source = DeepgramSource(make_settings(), 16000)
+    source = DeepgramSource(make_settings(), 16000, EN_TO_KO)
     source._connection = FakeConnection()
     source._keepalive = asyncio.create_task(source._run_keepalive())
 
@@ -279,7 +308,7 @@ async def test_a_failing_keepalive_stops_the_ticker_instead_of_looping(monkeypat
             self.attempts += 1
             raise RuntimeError("connection is gone")
 
-    source = DeepgramSource(make_settings(), 16000)
+    source = DeepgramSource(make_settings(), 16000, EN_TO_KO)
     broken = Broken()
     source._connection = broken
 

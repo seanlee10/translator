@@ -1,6 +1,7 @@
 import pytest
 
 from app.config import Settings
+from app.direction import DIRECTIONS, EN_TO_KO, EN_TO_ZH, KO_TO_EN
 from app.models import ContextPair
 from app.providers import PROVIDER_REGISTRY
 from app.translator import (
@@ -45,12 +46,16 @@ class StepClock:
 
 
 def test_system_prompt_carries_the_configured_register():
-    assert "해요체" in build_system_prompt(make_settings(korean_register="해요체"))
+    assert "해요체" in build_system_prompt(
+        make_settings(korean_register="해요체"), EN_TO_KO
+    )
 
 
 def test_user_prompt_orders_context_before_the_text_to_translate():
     prompt = build_user_prompt(
-        "three", [ContextPair(en="one", ko="하나"), ContextPair(en="two", ko="둘")]
+        "three",
+        [ContextPair(source="one", target="하나"), ContextPair(source="two", target="둘")],
+        EN_TO_KO,
     )
 
     assert prompt.index("one") < prompt.index("two") < prompt.index("three")
@@ -58,7 +63,7 @@ def test_user_prompt_orders_context_before_the_text_to_translate():
 
 
 def test_user_prompt_without_context_is_still_valid():
-    assert "hello" in build_user_prompt("hello", [])
+    assert "hello" in build_user_prompt("hello", [], EN_TO_KO)
 
 
 @pytest.mark.parametrize(
@@ -88,12 +93,13 @@ async def test_router_uses_the_default_provider_and_stamps_provenance():
         {"anthropic": anthropic, "groq": groq},
         default="anthropic",
         settings=make_settings(),
+        direction=EN_TO_KO,
         now=StepClock(),
     )
 
     result = await router.translate("hello", [])
 
-    assert result.ko == "안녕하세요"
+    assert result.text == "안녕하세요"
     assert result.provider == "anthropic"
     assert result.latency_ms == 250
     assert len(anthropic.seen) == 1 and not groq.seen
@@ -106,37 +112,15 @@ async def test_switching_provider_routes_subsequent_calls():
         {"anthropic": anthropic, "groq": groq},
         default="anthropic",
         settings=make_settings(),
+        direction=EN_TO_KO,
     )
 
     router.set_provider("groq")
     result = await router.translate("hello", [])
 
     assert result.provider == "groq"
-    assert result.ko == "반갑습니다"
+    assert result.text == "반갑습니다"
     assert len(groq.seen) == 1 and not anthropic.seen
-
-
-async def test_all_registered_providers_receive_byte_identical_prompts():
-    # Parameterized over PROVIDER_REGISTRY rather than hardcoding the three
-    # ids: a fourth registry entry must automatically be covered by this
-    # invariant, not silently skipped.
-    ids = [spec.id for spec in PROVIDER_REGISTRY]
-    fakes = {provider_id: FakeProvider(provider_id) for provider_id in ids}
-    router = TranslatorRouter(
-        dict(fakes),
-        default=ids[0],
-        settings=make_settings(),
-    )
-    context = [ContextPair(en="one", ko="하나")]
-
-    for provider_id in ids:
-        router.set_provider(provider_id)
-        await router.translate("hello", context)
-
-    seen_prompts = [fakes[provider_id].seen[0] for provider_id in ids]
-    # Any quality difference must be the model, not the scaffolding. Every
-    # configured provider must match, not just a pair.
-    assert all(prompt == seen_prompts[0] for prompt in seen_prompts)
 
 
 def test_unknown_provider_is_rejected():
@@ -144,6 +128,7 @@ def test_unknown_provider_is_rejected():
         {"anthropic": FakeProvider("anthropic")},
         default="anthropic",
         settings=make_settings(),
+        direction=EN_TO_KO,
     )
 
     with pytest.raises(ValueError):
@@ -152,3 +137,125 @@ def test_unknown_provider_is_rejected():
     # A rejected switch must leave the router pointing at its prior provider,
     # not at the invalid name — otherwise the next translate() would KeyError.
     assert router.current_provider == "anthropic"
+
+
+@pytest.mark.parametrize("direction", list(DIRECTIONS.values()), ids=list(DIRECTIONS))
+def test_all_configured_providers_receive_byte_identical_prompts(direction):
+    # The app exists to compare models. If the scaffolding differs per
+    # provider, the comparison measures the scaffolding. Parameterized over
+    # PROVIDER_REGISTRY so a newly registered provider is covered
+    # automatically, and now over DIRECTIONS too.
+    settings = make_settings()
+    providers = {spec.id: FakeProvider(spec.id) for spec in PROVIDER_REGISTRY}
+    context = (ContextPair(source="hello", target="translated"),)
+
+    seen = []
+    for spec in PROVIDER_REGISTRY:
+        router = TranslatorRouter(providers, spec.id, settings, direction)
+        import asyncio
+
+        asyncio.run(router.translate("some text", context))
+        seen.append(providers[spec.id].seen[-1])
+
+    assert len(set(seen)) == 1, "providers received different prompts"
+
+
+def test_the_system_prompt_names_the_direction_it_is_translating():
+    en_ko = build_system_prompt(make_settings(), EN_TO_KO)
+    ko_en = build_system_prompt(make_settings(), KO_TO_EN)
+
+    assert "English speech captions into Korean" in en_ko
+    assert "Korean speech captions into English" in ko_en
+    assert en_ko != ko_en
+
+
+def test_the_korean_register_appears_only_when_korean_is_the_target():
+    settings = make_settings(korean_register="해요체")
+    assert "해요체" in build_system_prompt(settings, EN_TO_KO)
+    # English has no speech-level axis, so steering it with a Korean
+    # register would be meaningless instruction noise.
+    assert "해요체" not in build_system_prompt(settings, KO_TO_EN)
+
+
+def test_the_user_prompt_asks_for_the_target_language():
+    assert "to Korean" in build_user_prompt("hi", (), EN_TO_KO)
+    assert "to English" in build_user_prompt("안녕", (), KO_TO_EN)
+
+
+def test_context_lines_read_source_first_in_each_direction():
+    en_ko = build_user_prompt(
+        "more", (ContextPair(source="hello", target="안녕하세요"),), EN_TO_KO
+    )
+    ko_en = build_user_prompt(
+        "더", (ContextPair(source="안녕하세요", target="hello"),), KO_TO_EN
+    )
+
+    # Same pair, ordered so the model reads source then target — which is
+    # the order it is being asked to produce.
+    assert en_ko.index("EN: hello") < en_ko.index("KO: 안녕하세요")
+    assert ko_en.index("KO: 안녕하세요") < ko_en.index("EN: hello")
+
+
+def test_translation_result_carries_text_not_ko():
+    # The field is direction-neutral now: it holds the TRANSLATED side,
+    # which is Korean one way and English the other.
+    settings = make_settings()
+    providers = {"anthropic": FakeProvider("anthropic", reply="hello there")}
+    router = TranslatorRouter(providers, "anthropic", settings, KO_TO_EN)
+
+    import asyncio
+
+    result = asyncio.run(router.translate("안녕하세요", ()))
+    assert result.text == "hello there"
+    assert not hasattr(result, "ko")
+
+
+def test_clean_output_strips_english_side_labels():
+    # Models prefix output in the target language, so the KO→EN path needs
+    # its own label set or every caption reads "English: hello there".
+    assert clean_output("English: hello there") == "hello there"
+    assert clean_output('English: "hello there"') == "hello there"
+    assert clean_output("Translation: hello there") == "hello there"
+
+
+def test_clean_output_still_strips_korean_side_labels():
+    assert clean_output("한국어: 안녕하세요") == "안녕하세요"
+    assert clean_output("번역: 안녕하세요") == "안녕하세요"
+
+
+def test_the_chinese_system_prompt_demands_taiwanese_traditional_script():
+    system = build_system_prompt(make_settings(korean_register="해요체"), EN_TO_ZH)
+    assert "English speech captions into Traditional Chinese (Taiwan)" in system
+    assert "Simplified" in system
+    # The Korean register is not a Chinese knob.
+    assert "해요체" not in system
+
+
+def test_the_korean_prompts_carry_no_chinese_rule():
+    for direction in (EN_TO_KO, KO_TO_EN):
+        assert "Simplified" not in build_system_prompt(make_settings(), direction)
+
+
+def test_chinese_context_lines_are_tagged_en_then_zh():
+    prompt = build_user_prompt(
+        "more", (ContextPair(source="hello", target="你好"),), EN_TO_ZH
+    )
+    assert prompt.index("EN: hello") < prompt.index("ZH: 你好")
+    assert "KO:" not in prompt
+    assert "to Traditional Chinese (Taiwan)" in prompt
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "Chinese: 你好",
+        "Traditional Chinese: 你好",
+        "Traditional Chinese (Taiwan): 你好",
+        "繁體中文：你好",
+        "中文: 你好",
+        "翻譯：「你好」".replace("「", '"').replace("」", '"'),
+        '"你好"',
+    ],
+)
+def test_clean_output_strips_chinese_labels(raw):
+    assert clean_output(raw) == "你好"

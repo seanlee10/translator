@@ -2,10 +2,10 @@
 
 Manual script — real keys, real network, real money. Not part of the suite.
 
-The measurement only means something if every provider sees the same English,
-so the audio is transcribed **once** and the resulting phrase list is reused.
-Transcribing per provider would measure Deepgram's run-to-run variation as
-much as the models.
+The measurement only means something if every provider sees the same source
+transcript, so the audio is transcribed **once** and the resulting phrase
+list is reused. Transcribing per provider would measure Deepgram's
+run-to-run variation as much as the models.
 
 Four stages, each cached in the work directory so a later stage can be redone
 without paying for the earlier ones again:
@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.config import get_settings  # noqa: E402
 from app.deepgram_client import DeepgramSource  # noqa: E402
+from app.direction import DIRECTIONS  # noqa: E402
 from app.models import ContextPair  # noqa: E402
 from app.providers import build_providers  # noqa: E402
 from app.tracing import setup_tracing, shutdown_tracing, tracing_enabled  # noqa: E402
@@ -73,34 +74,64 @@ PACE_CAP_S = 5.0
 JUDGE_PROVIDER = "openai"
 JUDGE_CONCURRENCY = 6
 
-JUDGE_SYSTEM = """You are evaluating Korean translations of English speech \
-captions from a live-captioning system.
+JUDGE_SYSTEM_TEMPLATE = """You are evaluating {target_label} translations of \
+{source_label} speech captions from a live-captioning system.
 
-You will see one English line and three candidate Korean translations, \
-labelled A, B and C. The labels are shuffled and carry no information — judge \
-only the text.
+You will see one {source_label} line and three candidate {target_label} \
+translations, labelled A, B and C. The labels are shuffled and carry no \
+information — judge only the text.
 
-Score each candidate on three axes, 1 to 5, where 5 is best:
-- accuracy: does it convey the English faithfully, without adding, dropping, \
-or inventing content?
-- fluency: does it read as natural Korean rather than translationese?
-- register: is it consistently in the {register} speech level?
-
-The English may be an unfinished fragment. A translation that correctly stays \
-a fragment is CORRECT; one that invents an ending is an accuracy failure.
+Score each candidate 1 to 5, where 5 is best:
+- accuracy: does it convey the {source_label} faithfully, without adding, \
+dropping, or inventing content?
+- fluency: does it read as natural {target_label} rather than translationese?
+{script_note}{register_axis}
+The {source_label} may be an unfinished fragment. A translation that \
+correctly stays a fragment is CORRECT; one that invents an ending is an \
+accuracy failure.
 
 Respond with ONLY a JSON object, no prose and no code fence:
-{{"A": {{"accuracy": n, "fluency": n, "register": n}},
-  "B": {{"accuracy": n, "fluency": n, "register": n}},
-  "C": {{"accuracy": n, "fluency": n, "register": n}},
+{{"A": {{"accuracy": n, "fluency": n{register_field}}},
+  "B": {{"accuracy": n, "fluency": n{register_field}}},
+  "C": {{"accuracy": n, "fluency": n{register_field}}},
   "rank": ["best label", "middle label", "worst label"],
   "note": "one short sentence naming the deciding difference"}}"""
+
+# The register axis only makes sense on the direction whose target is
+# Korean (see Direction.applies_register in app/direction.py) — asking a
+# judge to score English output against `korean_register` would itself be
+# the kind of meaningless-score bug this parameterization exists to avoid.
+_REGISTER_AXIS = "- register: is it consistently in the {register} speech level?\n"
+_REGISTER_FIELD = ', "register": n'
+# The en>zh audience is in Taiwan: a fluent answer in Simplified characters
+# or Mainland vocabulary is still wrong for them, and a judge not told so
+# would happily reward it.
+_TAIWAN_SCRIPT_NOTE = (
+    "  Simplified characters or Mainland-only vocabulary count as fluency "
+    "failures: the audience reads Traditional Chinese as used in Taiwan.\n"
+)
+
+
+def build_judge_system(settings, direction) -> str:
+    register_axis = (
+        _REGISTER_AXIS.format(register=settings.korean_register)
+        if direction.applies_register else ""
+    )
+    register_field = _REGISTER_FIELD if direction.applies_register else ""
+    return JUDGE_SYSTEM_TEMPLATE.format(
+        source_label=direction.source_label,
+        target_label=direction.target_label,
+        register_axis=register_axis,
+        register_field=register_field,
+        script_note=_TAIWAN_SCRIPT_NOTE if direction.target_slot == "zh" else "",
+    )
 
 
 # ---------------------------------------------------------------- transcribe
 
 
-async def transcribe(settings, audio: Path, seconds: float | None, speed: float):
+async def transcribe(settings, audio: Path, seconds: float | None, speed: float,
+                     direction):
     """Stream the file through the real Deepgram adapter and keep the finals."""
     trim = ["-t", str(seconds)] if seconds else []
     proc = await asyncio.create_subprocess_exec(
@@ -110,7 +141,7 @@ async def transcribe(settings, audio: Path, seconds: float | None, speed: float)
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
 
-    source = DeepgramSource(settings, SAMPLE_RATE)
+    source = DeepgramSource(settings, SAMPLE_RATE, direction)
     await source.connect()
 
     sent = {"bytes": 0}
@@ -164,9 +195,9 @@ async def transcribe(settings, audio: Path, seconds: float | None, speed: float)
 # ---------------------------------------------------------------- translate
 
 
-async def translate_all(settings, phrases, run_id, only=None,
+async def translate_all(settings, phrases, run_id, direction, only=None,
                         pace: bool = True, pace_cap: float = PACE_CAP_S):
-    """Every provider sees the same English, each with its own rolling context.
+    """Every provider sees the same source text, each with its own rolling context.
 
     Per-provider context is deliberate: that is what the live app does, so a
     provider is measured with the history it would actually have had.
@@ -192,7 +223,8 @@ async def translate_all(settings, phrases, run_id, only=None,
 
     routers = {
         name: TranslatorRouter(providers={name: providers[name]},
-                               default=name, settings=settings)
+                               default=name, settings=settings,
+                               direction=direction)
         for name in names
     }
     contexts = {name: deque(maxlen=settings.context_pairs) for name in names}
@@ -234,6 +266,7 @@ async def translate_all(settings, phrases, run_id, only=None,
                         sp.set_attribute("session.id", run_id)
                         sp.set_attribute("translation.provider", name)
                         sp.set_attribute("phrase.id", phrase["phrase_id"])
+                        sp.set_attribute("phrase.direction", direction.id)
                         try:
                             result = await router.translate(phrase["en"], context)
                         except Exception as exc:
@@ -243,12 +276,12 @@ async def translate_all(settings, phrases, run_id, only=None,
                             sp.record_exception(exc)
                             sp.set_status(Status(StatusCode.ERROR, str(exc)))
                             raise
-                        sp.set_attribute("output.value", result.ko)
+                        sp.set_attribute("output.value", result.text)
                         sp.set_attribute("translation.latency_ms",
                                          result.latency_ms)
                         sp.set_status(Status(StatusCode.OK))
                 return name, {
-                    "ko": result.ko,
+                    "ko": result.text,
                     "latency_ms": result.latency_ms,
                     "span_id": span_id,
                     "error": None,
@@ -270,6 +303,7 @@ async def translate_all(settings, phrases, run_id, only=None,
                 ps.set_attribute("input.audio.transcript", phrase["en"])
                 ps.set_attribute("session.id", run_id)
                 ps.set_attribute("phrase.id", phrase["phrase_id"])
+                ps.set_attribute("phrase.direction", direction.id)
                 done = await asyncio.gather(*(one(n) for n in names))
                 failed = [n for n, r in done if r["error"]]
                 if failed:
@@ -281,9 +315,13 @@ async def translate_all(settings, phrases, run_id, only=None,
 
         for name, payload in done:
             row["translations"][name] = payload
+            # results.json's "en"/"ko" keys are ROLE keys (spoken /
+            # translated), kept as-is so older runs stay readable by
+            # benchmark_dashboard.py. ContextPair is role-based too, so no
+            # language mapping is needed here.
             if payload["ko"]:
                 contexts[name].append(
-                    ContextPair(en=phrase["en"], ko=payload["ko"])
+                    ContextPair(source=phrase["en"], target=payload["ko"])
                 )
         rows.append(row)
         if (index + 1) % 20 == 0:
@@ -398,7 +436,7 @@ def build_judge(settings, provider: str, model: str | None):
     return call, model
 
 
-async def judge_all(settings, rows, provider: str, model: str | None):
+async def judge_all(settings, rows, provider: str, model: str | None, direction):
     """One blind three-way comparison per phrase.
 
     Labels are shuffled per phrase and the provider names are never shown, so
@@ -408,7 +446,7 @@ async def judge_all(settings, rows, provider: str, model: str | None):
     """
     call, model = build_judge(settings, provider, model)
     logger.info("judge: %s (%s)", provider, model)
-    system = JUDGE_SYSTEM.format(register=settings.korean_register)
+    system = build_judge_system(settings, direction)
     gate = asyncio.Semaphore(JUDGE_CONCURRENCY)
     labels = ["A", "B", "C"]
 
@@ -422,7 +460,9 @@ async def judge_all(settings, rows, provider: str, model: str | None):
         mapping = dict(zip(labels, names))
         candidates = "\n".join(f"{lab}: {usable[mapping[lab]]}"
                                for lab in labels[: len(names)])
-        prompt = f"English:\n{row['en']}\n\nCandidates:\n{candidates}"
+        prompt = (
+            f"{direction.source_label}:\n{row['en']}\n\nCandidates:\n{candidates}"
+        )
 
         async with gate:
             for attempt in range(2):
@@ -657,13 +697,47 @@ def publish_quality(settings, rows, run_id: str) -> int:
 # --------------------------------------------------------------------- main
 
 
+def phrases_cache_path(work: Path, direction) -> Path:
+    """Where this run's transcript is cached: keyed by SPOKEN language.
+
+    Transcribe once, translate many. A phrase list is only valid for the
+    language it was transcribed in (reusing an English list for a Korean run
+    would silently benchmark the wrong thing), but it is valid for every
+    direction that transcribes that language: en>ko and en>zh share one
+    English transcript, so both target languages are compared on identical
+    phrases and the second run pays no Deepgram time.
+
+    Returns `phrases-<language>.json` when it exists, else the newest legacy
+    name that holds the same language (per-direction `phrases-en-ko.json`
+    from before this keying, or the original single-language `phrases.json`,
+    which was always English), else `phrases-<language>.json` to write.
+    """
+    lang = direction.deepgram_language
+    primary = work / f"phrases-{lang}.json"
+    if primary.exists():
+        return primary
+    legacy = [
+        work / f"phrases-{d.id.replace('>', '-')}.json"
+        for d in DIRECTIONS.values()
+        if d.deepgram_language == lang
+    ]
+    if lang == "en":
+        legacy.append(work / "phrases.json")
+    for path in legacy:
+        if path.exists():
+            logger.info("reusing legacy transcript cache %s", path)
+            return path
+    return primary
+
+
 async def main(args) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     settings = get_settings()
+    direction = DIRECTIONS[args.direction]
     work = Path(args.out)
     work.mkdir(parents=True, exist_ok=True)
 
-    phrases_path = work / "phrases.json"
+    phrases_path = phrases_cache_path(work, direction)
     translations_path = work / "translations.json"
     results_path = work / "results.json"
 
@@ -672,12 +746,16 @@ async def main(args) -> int:
 
     if start_at <= 0:
         if phrases_path.exists() and not args.force:
-            logger.info("phrases.json exists; reusing it (--force to redo)")
+            logger.info("%s exists; reusing it (--force to redo)", phrases_path)
         else:
-            logger.info("transcribing %s", args.audio)
+            # Always write the language-keyed name, even when a legacy
+            # cache was found but --force asked for a fresh transcription.
+            phrases_path = work / f"phrases-{direction.deepgram_language}.json"
+            logger.info("transcribing %s (%s)", args.audio, direction.id)
             phrases = await transcribe(
                 settings, Path(args.audio),
                 args.minutes * 60 if args.minutes else None, args.speed,
+                direction,
             )
             phrases_path.write_text(
                 json.dumps(phrases, ensure_ascii=False, indent=2)
@@ -692,7 +770,7 @@ async def main(args) -> int:
             logger.warning("tracing is off; Arize will get nothing")
         logger.info("translating %d phrases (run_id=%s)", len(phrases), run_id)
         only = [p.strip() for p in args.providers.split(",")] if args.providers else None
-        rows = await translate_all(settings, phrases, run_id, only=only,
+        rows = await translate_all(settings, phrases, run_id, direction, only=only,
                                    pace=not args.no_pace, pace_cap=args.pace_cap)
         translations_path.write_text(
             json.dumps({"run_id": run_id, "rows": rows},
@@ -707,7 +785,7 @@ async def main(args) -> int:
     if start_at <= 2:
         logger.info("judging %d phrases", len(rows))
         rows = await judge_all(settings, rows, args.judge_provider,
-                               args.judge_model)
+                               args.judge_model, direction)
         translations_path.write_text(
             json.dumps({"run_id": run_id, "rows": rows},
                        ensure_ascii=False, indent=2)
@@ -716,6 +794,7 @@ async def main(args) -> int:
     providers = sorted({n for r in rows for n in r["translations"]})
     results = {
         "run_id": run_id,
+        "direction": direction.id,
         "audio": str(args.audio),
         "minutes": args.minutes,
         "judge_provider": args.judge_provider,
@@ -767,6 +846,12 @@ if __name__ == "__main__":
     p.add_argument("--minutes", type=float, default=None,
                    help="transcribe only the first N minutes")
     p.add_argument("--speed", type=float, default=DEFAULT_SPEED)
+    p.add_argument(
+        "--direction",
+        choices=sorted(DIRECTIONS),
+        default="en>ko",
+        help="Translation direction. Also selects the Deepgram language.",
+    )
     p.add_argument("--out", default="benchmarks/run")
     p.add_argument("--stage", choices=["transcribe", "translate", "judge", "report"])
     p.add_argument("--judge-provider", default=JUDGE_PROVIDER,

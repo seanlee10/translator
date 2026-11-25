@@ -3,6 +3,12 @@ import "./App.css";
 import { Controls } from "./components/Controls";
 import { OverlayView } from "./components/OverlayView";
 import { TranscriptView } from "./components/TranscriptView";
+import {
+  DEFAULT_DIRECTION,
+  directionById,
+  displayDirection,
+  type DirectionId,
+} from "./directions";
 import { useAudioCapture } from "./hooks/useAudioCapture";
 import { useCaptionSocket } from "./hooks/useCaptionSocket";
 import { useProviders } from "./hooks/useProviders";
@@ -35,6 +41,12 @@ function ControlCenter() {
   // Starts unset: the real choices come from the backend's GET /providers,
   // fetched below, and only ever a provider it actually offers.
   const [provider, setProvider] = useState<string | null>(null);
+  // The PENDING UI selection, not necessarily what the current session
+  // actually started with — see socket.direction (from useCaptionSocket)
+  // for that. Passed to Controls; socket.direction is what's passed to the
+  // two views so existing captions never re-render under a direction that
+  // wasn't theirs.
+  const [direction, setDirection] = useState<DirectionId>(DEFAULT_DIRECTION.id);
 
   const {
     providers,
@@ -46,15 +58,19 @@ function ControlCenter() {
   const audio = useAudioCapture();
   const sessionStartedRef = useRef(false);
   const providerRef = useRef(provider);
+  const directionRef = useRef(direction);
   const overlayChannelRef = useRef<BroadcastChannel | null>(null);
   const snapshotRef = useRef<OverlaySnapshot>(
-    createOverlaySnapshot([], "idle", fontSize),
+    createOverlaySnapshot([], "idle", fontSize, DEFAULT_DIRECTION.id),
   );
 
+  // socket.direction is the direction the RUNNING SESSION actually started
+  // with, not the pending toggle — same distinction as TranscriptView.
   snapshotRef.current = createOverlaySnapshot(
     socket.phrases,
     socket.status,
     fontSize,
+    socket.direction.id,
   );
 
   useEffect(() => {
@@ -65,6 +81,10 @@ function ControlCenter() {
   useEffect(() => {
     providerRef.current = provider;
   }, [provider]);
+
+  useEffect(() => {
+    directionRef.current = direction;
+  }, [direction]);
 
   // Selects the initial model once the server's list arrives. Only fires
   // while nothing has been picked yet, so it never overrides a user's
@@ -126,7 +146,7 @@ function ControlCenter() {
     let started = false;
     await audio.start((pcm, sampleRate) => {
       if (!started) {
-        socket.sendStart(sampleRate);
+        socket.sendStart(sampleRate, directionRef.current);
         // Only sent when a provider is actually selected (e.g. the server
         // has none configured otherwise) — 'config' expects a real
         // provider id when the field is present at all.
@@ -162,6 +182,18 @@ function ControlCenter() {
 
   const visibleError = audio.error ?? socket.error;
 
+  // No phrases on screen yet: nothing to mislabel, so show the PENDING
+  // selection (otherwise the empty state tells the user to speak the wrong
+  // language). Once phrases exist, they must stay read under the direction
+  // their session actually ran in. Safe because the toggle is disabled
+  // while a session is active — pending and session direction can only
+  // diverge while stopped. See directions.ts's displayDirection.
+  const shownDirection = displayDirection(
+    socket.phrases.length,
+    directionById(direction),
+    socket.direction,
+  );
+
   return (
     <main className="app-shell">
       <div className="ambient ambient-one" />
@@ -176,7 +208,10 @@ function ControlCenter() {
           </div>
           <div>
             <p className="eyebrow">LIVE INTERPRETATION STUDIO</p>
-            <h1>English <span>→</span> 한국어</h1>
+            <h1>
+              {shownDirection.sourceLabel} <span>→</span>{" "}
+              {shownDirection.targetLabel}
+            </h1>
           </div>
         </div>
 
@@ -213,6 +248,7 @@ function ControlCenter() {
           phrases={socket.phrases}
           fontSize={fontSize}
           providers={providers}
+          direction={shownDirection}
         />
         <Controls
           active={audio.active}
@@ -230,6 +266,9 @@ function ControlCenter() {
           providersError={providersError}
           phrases={socket.phrases}
           onOpenOverlay={openOverlay}
+          direction={direction}
+          onDirection={setDirection}
+          exportDirection={shownDirection}
         />
       </div>
     </main>

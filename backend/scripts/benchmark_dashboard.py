@@ -32,6 +32,7 @@ CSS = """
   --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
   --ko:"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic","Nanum Gothic",
        system-ui,sans-serif;
+  --zh:"PingFang TC","Noto Sans TC","Microsoft JhengHei",system-ui,sans-serif;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -148,6 +149,7 @@ td { padding:12px 14px; border-bottom:1px solid var(--line); vertical-align:top;
 tr:last-child td { border-bottom:0; }
 td.en { color:var(--ink); max-width:290px; }
 td.ko { font-family:var(--ko); max-width:270px; }
+td.ko.zh { font-family:var(--zh); }
 td.ko.best { background:color-mix(in srgb,var(--good) 9%,transparent); }
 .tick {
   display:inline-flex; align-items:center; gap:5px; margin-top:5px;
@@ -240,6 +242,18 @@ def render(results: dict) -> str:
     providers = list(summary)
     rows = results["rows"]
     models = results.get("models", {})
+    # This script deliberately does not import app.direction — it only ever
+    # reads results.json, so it can re-render without the app package or a
+    # working directory. Same directions, small local label table instead.
+    # Note results.json's "en"/"ko" row keys are ROLE keys (spoken /
+    # translated), not languages.
+    direction = results.get("direction", "en>ko")
+    source_label, target_label = {
+        "en>ko": ("english", "korean"),
+        "ko>en": ("korean", "english"),
+        "en>zh": ("english", "traditional chinese"),
+    }.get(direction, ("english", "korean"))
+    target_cls = " zh" if direction == "en>zh" else ""
 
     flags = {n: throttle(rows, n) for n in providers}
     judged_any = any(s["judged"] for s in summary.values())
@@ -262,15 +276,16 @@ def render(results: dict) -> str:
     out.append('<div class="wrap"><header>')
     out.append("<h1>Translating a commencement address, live</h1>")
     out.append(
-        '<p class="sub">Deepgram transcribed the audio once; every model then '
-        "translated that identical phrase list into Korean, each carrying its "
-        "own rolling context exactly as it would in a live session. Quality "
-        "comes from a blind three-way comparison where the models were "
-        "relabelled A/B/C.</p>"
+        f'<p class="sub">Deepgram transcribed the audio once; every model then '
+        f"translated that identical phrase list into {esc(target_label.title())}, each "
+        f"carrying its own rolling context exactly as it would in a live "
+        f"session. Quality comes from a blind three-way comparison where the "
+        f"models were relabelled A/B/C.</p>"
     )
     audio_name = Path(results.get("audio", "")).name
     minutes = results.get("minutes")
     out.append('<div class="meta">')
+    out.append(f'<div>direction <b>{esc(results.get("direction", "en>ko"))}</b></div>')
     out.append(f'<div>source <b>{esc(audio_name)}</b></div>')
     out.append(
         f'<div>span <b>{esc(f"first {minutes:g} min" if minutes else "full")}</b></div>'
@@ -373,7 +388,7 @@ def render(results: dict) -> str:
 
     # ---- phrase table ----
     out.append("<section><h2>Phrase by phrase</h2><div class=\"scroll\"><table>")
-    out.append("<thead><tr><th>at</th><th>english</th>")
+    out.append(f"<thead><tr><th>at</th><th>{esc(source_label)}</th>")
     for name in providers:
         out.append(
             f'<th class="hue" style="--hue:var(--hue-{name})">{esc(name)}</th>'
@@ -393,7 +408,7 @@ def render(results: dict) -> str:
         out.append("</td>")
         for name in providers:
             t = row["translations"].get(name, {})
-            cls = "ko best" if name == winner else "ko"
+            cls = ("ko best" if name == winner else "ko") + target_cls
             out.append(f'<td class="{cls}">')
             if t.get("error"):
                 out.append(f'<span class="err">{esc(t["error"])}</span>')

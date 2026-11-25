@@ -1,3 +1,10 @@
+import {
+  DIRECTIONS,
+  sourceTextOf,
+  targetTextOf,
+  type DirectionId,
+  type DirectionInfo,
+} from "../directions";
 import type { Phrase, Status } from "../hooks/useCaptionSocket";
 import type { ProviderInfo } from "../providers";
 
@@ -17,16 +24,32 @@ interface Props {
   providersError: string | null;
   phrases: Phrase[];
   onOpenOverlay: () => void;
+  direction: DirectionId;
+  onDirection: (id: DirectionId) => void;
+  // The direction the ON-SCREEN transcript is actually being read under
+  // (App.tsx's shownDirection) — NOT necessarily `direction` above, which
+  // is the pending toggle selection. While stopped with a previous
+  // session's phrases still visible, flipping the toggle must not reverse
+  // the source/target line order in the export relative to what's shown.
+  exportDirection: DirectionInfo;
 }
 
 export function Controls(props: Props) {
   const exportTranscript = () => {
+    const direction = props.exportDirection;
     const body = props.phrases
       .map((p) => {
         const tag = p.provider
           ? ` [${p.provider}${p.latencyMs !== null ? ` ${p.latencyMs}ms` : ""}]`
           : "";
-        return `EN: ${p.en}\nKO: ${p.ko ?? ""}${tag}\n`;
+        // Source first, then target. The EN:/KO: labels stay literally
+        // true — they name the language, not the role.
+        const source = direction.sourceLang.toUpperCase();
+        const target = direction.targetLang.toUpperCase();
+        return (
+          `${source}: ${sourceTextOf(p, direction) ?? ""}\n` +
+          `${target}: ${targetTextOf(p, direction) ?? ""}${tag}\n`
+        );
       })
       .join("\n");
     const url = URL.createObjectURL(new Blob([body], { type: "text/plain" }));
@@ -69,6 +92,33 @@ export function Controls(props: Props) {
         </span>
         <span className="button-arrow">{props.active ? "■" : "→"}</span>
       </button>
+
+      <section className="control-section">
+        <div className="section-label">
+          <span>Direction</span>
+          <span className="section-value">
+            {props.active ? "Locked while listening" : ""}
+          </span>
+        </div>
+        <div className="model-toggle" role="group" aria-label="Translation direction">
+          {DIRECTIONS.map((d) => (
+            <button
+              key={d.id}
+              className={props.direction === d.id ? "selected" : ""}
+              onClick={() => props.onDirection(d.id)}
+              // Deepgram's language is fixed at connect time and this app
+              // has no reconnect path, so the direction genuinely cannot
+              // change mid-session — the same reason the microphone select
+              // is disabled while active. Disabling says so honestly
+              // instead of letting the click be silently rejected by the
+              // server.
+              disabled={props.active}
+            >
+              <strong>{d.label}</strong>
+            </button>
+          ))}
+        </div>
+      </section>
 
       <section className="control-section">
         <div className="section-label">

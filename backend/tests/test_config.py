@@ -18,11 +18,12 @@ def make(**overrides) -> Settings:
 def test_defaults_match_the_design():
     s = make()
 
-    assert s.anthropic_model == "claude-haiku-4-5"
+    assert s.anthropic_model == "claude-haiku-5-5"
     assert s.groq_model == "qwen/qwen3.6-27b"
     assert s.xai_model == "grok-4.20-0309-non-reasoning"
     assert s.xai_base_url == "https://api.x.ai/v1"
     assert s.default_provider == "anthropic"
+    assert s.default_direction == "en>ko"
     assert s.deepgram_model == "nova-3"
     assert s.translate_interims is False
     assert s.debounce_ms == 400

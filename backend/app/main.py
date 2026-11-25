@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from app.config import Settings, get_settings
 from app.deepgram_client import DeepgramSource
+from app.direction import Direction, DIRECTIONS, resolve_direction
 from app.models import ErrorOut, ProviderInfo, StatusOut
 from app.pipeline import Pipeline
 from app.providers import build_providers, configured_providers
@@ -43,11 +44,11 @@ TRANSCRIPTION_ENDED_MESSAGE = (
 )
 
 
-def _default_source_factory(settings: Settings, sample_rate: int):
-    return DeepgramSource(settings, sample_rate)
+def _default_source_factory(settings: Settings, sample_rate: int, direction: Direction):
+    return DeepgramSource(settings, sample_rate, direction)
 
 
-def _default_router_factory(settings: Settings) -> TranslatorRouter:
+def _default_router_factory(settings: Settings, direction: Direction) -> TranslatorRouter:
     providers = build_providers(settings)
     default: str | None = settings.default_provider
     if default not in providers:
@@ -74,6 +75,7 @@ def _default_router_factory(settings: Settings) -> TranslatorRouter:
         providers=providers,
         default=default,
         settings=settings,
+        direction=direction,
     )
 
 
@@ -188,14 +190,25 @@ async def session(ws: WebSocket) -> None:
                     except (TypeError, ValueError) as exc:
                         await emit(ErrorOut(message=f"invalid sample_rate: {exc}"))
                         continue
-                    source = app.state.source_factory(settings, sample_rate)
+                    direction = DIRECTIONS[settings.default_direction]
+                    if "direction" in control:
+                        direction, direction_error = resolve_direction(
+                            control["direction"], fallback=direction
+                        )
+                        if direction_error is not None:
+                            # Non-fatal by design: a bad field must not cost
+                            # the user their session.
+                            await emit(ErrorOut(message=direction_error))
+
+                    source = app.state.source_factory(settings, sample_rate, direction)
                     await source.connect()
 
-                    router = app.state.router_factory(settings)
+                    router = app.state.router_factory(settings, direction)
                     pipeline = Pipeline(
                         translate=router.translate,
                         emit=emit,
                         settings=settings,
+                        direction=direction,
                         # A no-op unless setup_tracing() actually came up.
                         trace_phrase=phrase_span,
                     )
@@ -209,6 +222,21 @@ async def session(ws: WebSocket) -> None:
                             ErrorOut(message="cannot configure before 'start'")
                         )
                         continue
+                    if "direction" in control:
+                        # Deepgram's language is fixed at connect time and
+                        # this app deliberately has no reconnect path (see
+                        # README's Known limitations), so honouring this
+                        # would leave us transcribing the old language while
+                        # claiming otherwise. Reject it out loud rather than
+                        # ignoring it silently.
+                        await emit(
+                            ErrorOut(
+                                message=(
+                                    "direction cannot be changed mid-session; "
+                                    "stop and restart the session to switch."
+                                )
+                            )
+                        )
                     if "translate_interims" in control:
                         pipeline.set_translate_interims(
                             _as_bool(control["translate_interims"])

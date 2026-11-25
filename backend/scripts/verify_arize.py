@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.config import get_settings  # noqa: E402
+from app.direction import EN_TO_KO  # noqa: E402
 from app.main import _default_router_factory  # noqa: E402
 from app.models import TranscriptEvent  # noqa: E402
 from app.pipeline import Pipeline  # noqa: E402
@@ -42,7 +43,7 @@ async def main(text: str, provider: str | None) -> int:
         print("\nFAIL: tracing did not come up. Set ARIZE_SPACE_ID and ARIZE_API_KEY.")
         return 1
 
-    router = _default_router_factory(settings)
+    router = _default_router_factory(settings, EN_TO_KO)
     if provider is not None:
         router.set_provider(provider)
     if router.current_provider is None:
@@ -60,6 +61,7 @@ async def main(text: str, provider: str | None) -> int:
         translate=router.translate,
         emit=emit,
         settings=settings,
+        direction=EN_TO_KO,
         trace_phrase=phrase_span,
     )
     await pipeline.start()

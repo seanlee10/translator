@@ -1,16 +1,24 @@
 import { useEffect, useState } from "react";
 import type { OverlayMessage, OverlaySnapshot } from "../lib/overlay";
 import { OVERLAY_CHANNEL } from "../lib/overlay";
+import { DEFAULT_DIRECTION, directionById, sourceTextOf, targetTextOf } from "../directions";
 
 const EMPTY_SNAPSHOT: OverlaySnapshot = {
   type: "snapshot",
   phrases: [],
   status: "idle",
   fontSize: 28,
+  direction: DEFAULT_DIRECTION.id,
 };
 
+// No props: the overlay is a separate window/page load with no access to
+// the control window's React state. Direction now travels atomically with
+// the phrases it describes, inside the snapshot itself (see
+// lib/overlay.ts) — derived below via directionById, which never throws
+// and degrades quietly to the default on a malformed value.
 export function OverlayView() {
   const [snapshot, setSnapshot] = useState(EMPTY_SNAPSHOT);
+  const direction = directionById(snapshot.direction);
 
   useEffect(() => {
     document.body.classList.add("overlay-document");
@@ -50,16 +58,17 @@ export function OverlayView() {
               key={phrase.phraseId}
             >
               <p
-                className="overlay-en"
+                className="overlay-source"
                 style={{ fontSize: `${Math.max(20, snapshot.fontSize * 0.7)}px` }}
               >
-                {phrase.en}
+                {sourceTextOf(phrase, direction) ?? ""}
               </p>
               <p
-                className="overlay-ko"
+                className="overlay-target"
+                lang={direction.targetHtmlLang}
                 style={{ fontSize: `${Math.max(32, snapshot.fontSize * 1.45)}px` }}
               >
-                {phrase.ko ?? "번역 중…"}
+                {targetTextOf(phrase, direction) ?? direction.translatingPlaceholder}
               </p>
             </article>
           ))

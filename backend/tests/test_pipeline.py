@@ -1,8 +1,10 @@
 import asyncio
+from contextlib import contextmanager
 
 from pydantic import BaseModel
 
 from app.config import Settings
+from app.direction import EN_TO_KO, EN_TO_ZH, KO_TO_EN
 from app.models import (
     CaptionOut,
     ErrorOut,
@@ -10,7 +12,7 @@ from app.models import (
     TranscriptOut,
     TranslationResult,
 )
-from app.pipeline import Pipeline
+from app.pipeline import Pipeline, _NullPhraseSpan
 
 
 def make_settings(**overrides) -> Settings:
@@ -41,9 +43,9 @@ class FakeTranslator:
         self.calls: list[tuple[str, list[tuple[str, str]]]] = []
 
     async def __call__(self, text, context):
-        self.calls.append((text, [(c.en, c.ko) for c in context]))
+        self.calls.append((text, [(c.source, c.target) for c in context]))
         return TranslationResult(
-            ko=f"[ko]{text}", provider=self.provider, latency_ms=100
+            text=f"[ko]{text}", provider=self.provider, latency_ms=100
         )
 
 
@@ -58,11 +60,13 @@ class Recorder:
         return [e for e in self.events if isinstance(e, CaptionOut)]
 
 
-async def run(events, settings=None, translator=None):
+async def run(events, settings=None, translator=None, direction=EN_TO_KO):
     settings = settings or make_settings()
     translator = translator or FakeTranslator()
     recorder = Recorder()
-    pipeline = Pipeline(translate=translator, emit=recorder, settings=settings)
+    pipeline = Pipeline(
+        translate=translator, emit=recorder, settings=settings, direction=direction
+    )
     await pipeline.start()
     for event in events:
         await pipeline.handle(event)
@@ -121,7 +125,7 @@ async def test_final_translations_are_emitted_in_order_despite_uneven_latency():
             self.n += 1
             await asyncio.sleep(0.05 if self.n == 1 else 0)
             return TranslationResult(
-                ko=f"[ko]{text}", provider="anthropic", latency_ms=1
+                text=f"[ko]{text}", provider="anthropic", latency_ms=1
             )
 
     recorder, _ = await run(
@@ -145,7 +149,7 @@ async def test_a_failing_final_emits_an_error_retries_once_and_keeps_going():
             if text == "bad":
                 raise RuntimeError("boom")
             return TranslationResult(
-                ko=f"[ko]{text}", provider="anthropic", latency_ms=1
+                text=f"[ko]{text}", provider="anthropic", latency_ms=1
             )
 
     flaky = Flaky()
@@ -170,10 +174,10 @@ async def test_context_order_is_correct_despite_uneven_latency():
 
         async def __call__(self, text, context):
             self.n += 1
-            self.calls.append((text, [(c.en, c.ko) for c in context]))
+            self.calls.append((text, [(c.source, c.target) for c in context]))
             await asyncio.sleep(0.05 if self.n == 1 else 0)
             return TranslationResult(
-                ko=f"[ko]{text}", provider="anthropic", latency_ms=1
+                text=f"[ko]{text}", provider="anthropic", latency_ms=1
             )
 
     _, translator = await run(
@@ -197,13 +201,15 @@ async def test_handle_never_blocks_on_translation():
         async def __call__(self, text, context):
             await gate.wait()
             return TranslationResult(
-                ko=f"[ko]{text}", provider="anthropic", latency_ms=1
+                text=f"[ko]{text}", provider="anthropic", latency_ms=1
             )
 
     settings = make_settings()
     translator = Gated()
     recorder = Recorder()
-    pipeline = Pipeline(translate=translator, emit=recorder, settings=settings)
+    pipeline = Pipeline(
+        translate=translator, emit=recorder, settings=settings, direction=EN_TO_KO
+    )
     await pipeline.start()
 
     # handle() must return as soon as the final is enqueued, not once it is
@@ -225,7 +231,7 @@ async def test_a_failed_phrase_does_not_enter_the_context_window():
             if text == "bad":
                 raise RuntimeError("boom")
             return TranslationResult(
-                ko=f"[ko]{text}", provider="anthropic", latency_ms=1
+                text=f"[ko]{text}", provider="anthropic", latency_ms=1
             )
 
     recorder, _ = await run(
@@ -250,14 +256,18 @@ class FakeClock:
         self.t += ms / 1000.0
 
 
-async def run_with_clock(items, settings=None, translator=None):
+async def run_with_clock(items, settings=None, translator=None, direction=EN_TO_KO):
     """items: TranscriptEvent to handle, or int milliseconds to advance."""
     settings = settings or make_settings()
     translator = translator or FakeTranslator()
     recorder = Recorder()
     clock = FakeClock()
     pipeline = Pipeline(
-        translate=translator, emit=recorder, settings=settings, now=clock
+        translate=translator,
+        emit=recorder,
+        settings=settings,
+        direction=direction,
+        now=clock,
     )
     await pipeline.start()
     for item in items:
@@ -271,7 +281,7 @@ async def run_with_clock(items, settings=None, translator=None):
     return recorder, translator
 
 
-async def test_english_interims_publish_without_any_translation_call():
+async def test_source_language_interims_publish_without_any_translation_call():
     recorder, translator = await run_with_clock(
         [TranscriptEvent(phrase_id=0, text="hel", is_final=False)],
         settings=make_settings(translate_interims=False),
@@ -311,6 +321,34 @@ async def test_interim_is_translated_once_the_debounce_window_elapses():
     ]
 
 
+async def test_ko_to_en_interim_puts_spoken_korean_and_translated_english_in_the_right_slots():
+    # _translate_interim calls to_slots too, and that call site is never
+    # exercised in the ko>en direction elsewhere in this file. Swapped
+    # arguments there would keep the suite green while showing backwards
+    # text in the presentation overlay (which renders provisionals
+    # unfiltered) with TRANSLATE_INTERIMS=true.
+    recorder, translator = await run_with_clock(
+        [
+            TranscriptEvent(phrase_id=0, text="안", is_final=False),
+            500,
+            TranscriptEvent(phrase_id=0, text="안녕하세요", is_final=False),
+        ],
+        direction=KO_TO_EN,
+    )
+
+    assert translator.calls == [("안녕하세요", [])]
+    assert recorder.captions() == [
+        CaptionOut(
+            phrase_id=0,
+            en="[ko]안녕하세요",
+            ko="안녕하세요",
+            status="provisional",
+            provider="anthropic",
+            latency_ms=100,
+        )
+    ]
+
+
 async def test_interims_inside_the_debounce_window_are_skipped():
     _, translator = await run_with_clock(
         [
@@ -336,13 +374,17 @@ async def test_an_in_flight_interim_suppresses_a_new_one_rather_than_queueing():
             calls.append(text)
             await gate.wait()
             return TranslationResult(
-                ko=f"[ko]{text}", provider="anthropic", latency_ms=1
+                text=f"[ko]{text}", provider="anthropic", latency_ms=1
             )
 
     recorder = Recorder()
     clock = FakeClock()
     pipeline = Pipeline(
-        translate=Blocking(), emit=recorder, settings=make_settings(), now=clock
+        translate=Blocking(),
+        emit=recorder,
+        settings=make_settings(),
+        direction=EN_TO_KO,
+        now=clock,
     )
     await pipeline.start()
 
@@ -375,13 +417,17 @@ async def test_a_late_interim_never_overwrites_a_finalized_phrase():
             if not text.endswith("!"):
                 await gate.wait()
             return TranslationResult(
-                ko=f"[ko]{text}", provider="anthropic", latency_ms=1
+                text=f"[ko]{text}", provider="anthropic", latency_ms=1
             )
 
     recorder = Recorder()
     clock = FakeClock()
     pipeline = Pipeline(
-        translate=SlowInterim(), emit=recorder, settings=make_settings(), now=clock
+        translate=SlowInterim(),
+        emit=recorder,
+        settings=make_settings(),
+        direction=EN_TO_KO,
+        now=clock,
     )
     await pipeline.start()
 
@@ -432,7 +478,11 @@ async def test_set_translate_interims_takes_effect_immediately():
     clock = FakeClock()
     translator = FakeTranslator()
     pipeline = Pipeline(
-        translate=translator, emit=recorder, settings=make_settings(), now=clock
+        translate=translator,
+        emit=recorder,
+        settings=make_settings(),
+        direction=EN_TO_KO,
+        now=clock,
     )
     await pipeline.start()
 
@@ -486,10 +536,12 @@ async def test_the_finals_english_is_published_before_it_is_enqueued():
     class Gated:
         async def __call__(self, text, context):
             await gate.wait()
-            return TranslationResult(ko=f"[ko]{text}", provider="anthropic", latency_ms=1)
+            return TranslationResult(text=f"[ko]{text}", provider="anthropic", latency_ms=1)
 
     recorder = Recorder()
-    pipeline = Pipeline(translate=Gated(), emit=recorder, settings=make_settings())
+    pipeline = Pipeline(
+        translate=Gated(), emit=recorder, settings=make_settings(), direction=EN_TO_KO
+    )
     await pipeline.start()
 
     await pipeline.handle(TranscriptEvent(phrase_id=0, text="hello", is_final=True))
@@ -521,7 +573,10 @@ async def test_a_raising_emit_does_not_kill_the_final_worker():
 
     emit = ExplodingEmit()
     pipeline = Pipeline(
-        translate=FakeTranslator(), emit=emit, settings=make_settings()
+        translate=FakeTranslator(),
+        emit=emit,
+        settings=make_settings(),
+        direction=EN_TO_KO,
     )
     await pipeline.start()
 
@@ -539,3 +594,191 @@ async def test_a_raising_emit_does_not_kill_the_final_worker():
     await pipeline.aclose()
 
     assert [(c.phrase_id, c.ko) for c in emit.captions()] == [(1, "[ko]second")]
+
+
+async def test_transcript_events_fill_the_source_language_slot():
+    emitted = []
+
+    async def emit(message):
+        emitted.append(message)
+
+    async def translate(text, context):
+        raise AssertionError("no translation for a bare interim")
+
+    pipeline = Pipeline(translate, emit, make_settings(), KO_TO_EN)
+    await pipeline.start()
+    await pipeline.handle(TranscriptEvent(phrase_id=0, text="안녕하세요", is_final=False))
+    await pipeline.drain()
+    await pipeline.aclose()
+
+    transcript = [m for m in emitted if isinstance(m, TranscriptOut)][0]
+    assert transcript.ko == "안녕하세요"
+    assert transcript.en is None
+
+
+async def test_final_captions_place_each_language_in_its_own_slot():
+    emitted = []
+
+    async def emit(message):
+        emitted.append(message)
+
+    async def translate(text, context):
+        return TranslationResult(text="hello there", provider="anthropic", latency_ms=12)
+
+    pipeline = Pipeline(translate, emit, make_settings(), KO_TO_EN)
+    await pipeline.start()
+    await pipeline.handle(TranscriptEvent(phrase_id=0, text="안녕하세요", is_final=True))
+    await pipeline.drain()
+    await pipeline.aclose()
+
+    caption = [m for m in emitted if isinstance(m, CaptionOut)][0]
+    assert caption.ko == "안녕하세요"   # what was spoken
+    assert caption.en == "hello there"  # what was produced
+    assert caption.status == "final"
+
+
+async def test_the_english_to_korean_direction_is_unchanged():
+    # Regression guard: the existing direction must behave exactly as before.
+    emitted = []
+
+    async def emit(message):
+        emitted.append(message)
+
+    async def translate(text, context):
+        return TranslationResult(text="안녕하세요", provider="anthropic", latency_ms=12)
+
+    pipeline = Pipeline(translate, emit, make_settings(), EN_TO_KO)
+    await pipeline.start()
+    await pipeline.handle(TranscriptEvent(phrase_id=0, text="hello there", is_final=True))
+    await pipeline.drain()
+    await pipeline.aclose()
+
+    caption = [m for m in emitted if isinstance(m, CaptionOut)][0]
+    assert caption.en == "hello there"
+    assert caption.ko == "안녕하세요"
+
+
+async def test_rolling_context_stores_spoken_then_translated():
+    # ContextPair is role-based: `source` is what was spoken, `target` what
+    # was produced, whichever languages those are. build_user_prompt labels
+    # them from the direction.
+    seen_context = []
+
+    async def emit(message):
+        pass
+
+    async def translate(text, context):
+        seen_context.append(tuple(context))
+        return TranslationResult(text="hello", provider="anthropic", latency_ms=1)
+
+    pipeline = Pipeline(translate, emit, make_settings(), KO_TO_EN)
+    await pipeline.start()
+    await pipeline.handle(TranscriptEvent(phrase_id=0, text="안녕", is_final=True))
+    await pipeline.drain()
+    await pipeline.handle(TranscriptEvent(phrase_id=1, text="반가워", is_final=True))
+    await pipeline.drain()
+    await pipeline.aclose()
+
+    pair = seen_context[-1][0]
+    assert pair.source == "안녕"
+    assert pair.target == "hello"
+
+
+async def test_a_failed_translation_still_leaves_the_source_text_published():
+    # The invariant this whole design rests on, stated direction-neutrally:
+    # the SOURCE text survives a failed translation. Previously phrased as
+    # "the English survives", which is only true one way round.
+    emitted = []
+
+    async def emit(message):
+        emitted.append(message)
+
+    async def translate(text, context):
+        raise RuntimeError("provider exploded")
+
+    pipeline = Pipeline(translate, emit, make_settings(), KO_TO_EN)
+    await pipeline.start()
+    await pipeline.handle(TranscriptEvent(phrase_id=0, text="안녕하세요", is_final=True))
+    await pipeline.drain()
+    await pipeline.aclose()
+
+    transcripts = [m for m in emitted if isinstance(m, TranscriptOut)]
+    errors = [m for m in emitted if isinstance(m, ErrorOut)]
+    assert transcripts[-1].ko == "안녕하세요"
+    assert errors and errors[0].phrase_id == 0
+    assert not [m for m in emitted if isinstance(m, CaptionOut)]
+
+
+async def test_the_phrase_span_receives_the_direction_id():
+    recorded = {}
+
+    @contextmanager
+    def trace_phrase(phrase_id, text, speech_ms, direction_id):
+        recorded["direction_id"] = direction_id
+        recorded["text"] = text
+        yield _NullPhraseSpan()
+
+    async def emit(message):
+        pass
+
+    async def translate(text, context):
+        return TranslationResult(text="hello", provider="anthropic", latency_ms=1)
+
+    pipeline = Pipeline(
+        translate, emit, make_settings(), KO_TO_EN, trace_phrase=trace_phrase
+    )
+    await pipeline.start()
+    await pipeline.handle(TranscriptEvent(phrase_id=0, text="안녕", is_final=True))
+    await pipeline.drain()
+    await pipeline.aclose()
+
+    assert recorded["direction_id"] == "ko>en"
+    # The span's input is the SOURCE text, in both directions.
+    assert recorded["text"] == "안녕"
+
+
+async def test_english_to_chinese_fills_en_and_zh_and_never_ko():
+    emitted = []
+
+    async def emit(message):
+        emitted.append(message)
+
+    async def translate(text, context):
+        return TranslationResult(text="你好", provider="anthropic", latency_ms=12)
+
+    pipeline = Pipeline(translate, emit, make_settings(), EN_TO_ZH)
+    await pipeline.start()
+    await pipeline.handle(TranscriptEvent(phrase_id=0, text="hello", is_final=True))
+    await pipeline.drain()
+    await pipeline.aclose()
+
+    transcript = [m for m in emitted if isinstance(m, TranscriptOut)][0]
+    assert (transcript.en, transcript.ko, transcript.zh) == ("hello", None, None)
+    caption = [m for m in emitted if isinstance(m, CaptionOut)][0]
+    assert (caption.en, caption.ko, caption.zh) == ("hello", None, "你好")
+    assert caption.status == "final"
+
+
+async def test_the_korean_directions_never_populate_zh():
+    for direction, spoken, produced in (
+        (EN_TO_KO, "hello", "안녕"),
+        (KO_TO_EN, "안녕", "hello"),
+    ):
+        emitted = []
+
+        async def emit(message):
+            emitted.append(message)
+
+        async def translate(text, context, produced=produced):
+            return TranslationResult(text=produced, provider="anthropic", latency_ms=1)
+
+        pipeline = Pipeline(translate, emit, make_settings(), direction)
+        await pipeline.start()
+        await pipeline.handle(TranscriptEvent(phrase_id=0, text=spoken, is_final=True))
+        await pipeline.drain()
+        await pipeline.aclose()
+
+        assert emitted, direction.id
+        for message in emitted:
+            if isinstance(message, (TranscriptOut, CaptionOut)):
+                assert message.zh is None, direction.id
