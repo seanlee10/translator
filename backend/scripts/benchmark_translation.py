@@ -697,6 +697,39 @@ def publish_quality(settings, rows, run_id: str) -> int:
 # --------------------------------------------------------------------- main
 
 
+def phrases_cache_path(work: Path, direction) -> Path:
+    """Where this run's transcript is cached: keyed by SPOKEN language.
+
+    Transcribe once, translate many. A phrase list is only valid for the
+    language it was transcribed in (reusing an English list for a Korean run
+    would silently benchmark the wrong thing), but it is valid for every
+    direction that transcribes that language: en>ko and en>zh share one
+    English transcript, so both target languages are compared on identical
+    phrases and the second run pays no Deepgram time.
+
+    Returns `phrases-<language>.json` when it exists, else the newest legacy
+    name that holds the same language (per-direction `phrases-en-ko.json`
+    from before this keying, or the original single-language `phrases.json`,
+    which was always English), else `phrases-<language>.json` to write.
+    """
+    lang = direction.deepgram_language
+    primary = work / f"phrases-{lang}.json"
+    if primary.exists():
+        return primary
+    legacy = [
+        work / f"phrases-{d.id.replace('>', '-')}.json"
+        for d in DIRECTIONS.values()
+        if d.deepgram_language == lang
+    ]
+    if lang == "en":
+        legacy.append(work / "phrases.json")
+    for path in legacy:
+        if path.exists():
+            logger.info("reusing legacy transcript cache %s", path)
+            return path
+    return primary
+
+
 async def main(args) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     settings = get_settings()
@@ -704,11 +737,7 @@ async def main(args) -> int:
     work = Path(args.out)
     work.mkdir(parents=True, exist_ok=True)
 
-    # Transcribe once, translate many — but a cached phrase list is only
-    # valid for the language it was transcribed in, so the cache filename
-    # must include the direction. Reusing an English phrase list for a
-    # Korean run would silently benchmark the wrong thing.
-    phrases_path = work / f"phrases-{direction.id.replace('>', '-')}.json"
+    phrases_path = phrases_cache_path(work, direction)
     translations_path = work / "translations.json"
     results_path = work / "results.json"
 
@@ -719,6 +748,9 @@ async def main(args) -> int:
         if phrases_path.exists() and not args.force:
             logger.info("%s exists; reusing it (--force to redo)", phrases_path)
         else:
+            # Always write the language-keyed name, even when a legacy
+            # cache was found but --force asked for a fresh transcription.
+            phrases_path = work / f"phrases-{direction.deepgram_language}.json"
             logger.info("transcribing %s (%s)", args.audio, direction.id)
             phrases = await transcribe(
                 settings, Path(args.audio),

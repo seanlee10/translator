@@ -302,3 +302,27 @@ def test_constructed_groq_client_resolves_to_a_single_openai_v1_segment():
 
     assert resolved == "https://api.groq.com/openai/v1/chat/completions"
     assert resolved.count("/openai/v1") == 1
+
+
+async def test_anthropic_sends_thinking_and_effort_only_to_haiku_5():
+    # Other Claude models reject these: Sonnet 4.5 rejects `effort`, Opus
+    # 5.5 / Sonnet 5.5 reject `thinking: disabled`. An ANTHROPIC_MODEL
+    # override must fall back to the plain request that works everywhere.
+    for model in ("claude-sonnet-4-5", "claude-opus-5-5", "claude-sonnet-5-5"):
+        client = FakeAnthropicClient()
+        await AnthropicProvider(client, make_settings(anthropic_model=model)).complete("s", "p")
+        assert client.kwargs["model"] == model
+        assert "thinking" not in client.kwargs, model
+        assert "output_config" not in client.kwargs, model
+
+
+async def test_xai_sends_reasoning_effort_only_to_grok_4_3():
+    # grok-4.5/4.6/4.7 cannot disable reasoning and may reject "none"; an
+    # unknown id must get the plain request rather than a guessed parameter.
+    for model in ("grok-4.5", "grok-4.7", "grok-4.20-0309-reasoning"):
+        client = FakeXAIClient()
+        await XAIProvider(client, make_settings(xai_model=model)).complete("s", "p")
+        assert "reasoning_effort" not in client.kwargs, model
+    client = FakeXAIClient()
+    await XAIProvider(client, make_settings(xai_model="grok-4.3-latest")).complete("s", "p")
+    assert client.kwargs["reasoning_effort"] == "none"

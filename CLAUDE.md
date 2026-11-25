@@ -10,7 +10,7 @@ Live caption translator: microphone → Deepgram streaming STT → Claude Haiku 
 # Backend (from backend/)
 pip install -e ".[dev]"
 uvicorn app.main:app --reload          # :8000
-python -m pytest -v                     # 203 tests
+python -m pytest -v                     # 205 tests
 python -m pytest tests/test_pipeline.py::test_a_late_interim_never_overwrites_a_finalized_phrase -v
 
 # Frontend (from frontend/)
@@ -132,7 +132,7 @@ Additive and optional. `setup_tracing()` returns `False` and logs — never rais
 
 Four things in there are load-bearing and were each learned the hard way:
 
-- **Transcribe once, translate many.** Per-provider transcription would measure Deepgram's run-to-run variance as much as the models. The phrase list is cached so later stages re-run free.
+- **Transcribe once, translate many.** Per-provider transcription would measure Deepgram's run-to-run variance as much as the models. The phrase list is cached per **spoken** language (`phrases-en.json`, `phrases-ko.json`, via `phrases_cache_path`), so later stages re-run free and en>ko / en>zh share one English transcript. Older per-direction (`phrases-en-ko.json`) and original `phrases.json` caches are still read.
 - **Push audio at 1x, never faster.** Endpointing is supposed to key off audio timestamps, so faster-than-real-time looks free. It is not: on one 2-minute excerpt, phrases recovered were 19 (1x), 11 (2x), 5 (4x), **0 (8x)**. A run costs one wall-clock minute per audio minute.
 - **Replay phrases on their spoken timeline.** Firing them back to back is ~20x the live request rate and trips provider rate limits. One run had a provider steady at 255 ms for the first half, then 2406 ms for the second, never recovering — it looked like the slowest model when it was in fact the fastest. `benchmark_dashboard.py` compares the two halves of a run and flags that step rather than silently correcting the number.
 - **Judge from outside the compared set.** `OPENAI_API_KEY` exists only for this and is deliberately absent from `PROVIDER_REGISTRY`; anthropic, groq and xai each score their own vendor's output, which shuffled A/B/C labels do not fix. Cross-checked on identical translations: Opus 5, Grok 4.20 and GPT-5.5 landed within 0.07 of each other on every model and produced the same ranking, with 80% per-phrase agreement between the two independent judges.
