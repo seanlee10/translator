@@ -65,6 +65,7 @@ export function OverlayView() {
               </p>
               <p
                 className="overlay-target"
+                lang={direction.targetHtmlLang}
                 style={{ fontSize: `${Math.max(32, snapshot.fontSize * 1.45)}px` }}
               >
                 {targetTextOf(phrase, direction) ?? direction.translatingPlaceholder}

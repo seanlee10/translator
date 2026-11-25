@@ -21,13 +21,13 @@ const phrase = (over: Partial<Phrase> = {}): Phrase => ({
 });
 
 describe("the direction constant", () => {
-  it("mirrors the backend's two ids exactly", () => {
+  it("mirrors the backend's three ids exactly", () => {
     // This list is a deliberate mirror of the backend's DIRECTIONS registry
     // rather than a fetched endpoint: unlike providers, whose availability
     // varies with configured API keys, the direction set has no runtime
-    // variance. If the backend ever grows a third, this is the second of
+    // variance. If the backend ever grows another, this is the second of
     // the two places to edit.
-    expect(DIRECTIONS.map((d) => d.id).sort()).toEqual(["en>ko", "ko>en"]);
+    expect(DIRECTIONS.map((d) => d.id).sort()).toEqual(["en>ko", "en>zh", "ko>en"]);
   });
 
   it("defaults to English to Korean, matching the backend default", () => {
@@ -53,6 +53,17 @@ describe("the direction constant", () => {
   it("carries a placeholder in the language being produced", () => {
     expect(directionById("en>ko").translatingPlaceholder).toBe("번역 중…");
     expect(directionById("ko>en").translatingPlaceholder).toBe("Translating…");
+    expect(directionById("en>zh").translatingPlaceholder).toBe("翻譯中…");
+  });
+
+  it("describes English to Taiwanese Traditional Chinese", () => {
+    const enZh = directionById("en>zh");
+    expect(enZh.sourceLang).toBe("en");
+    expect(enZh.targetLang).toBe("zh");
+    expect(enZh.targetLabel).toBe("繁體中文");
+    // Drives the glyph set: zh-Hant, not a bare "zh" the browser may
+    // render with Simplified-Chinese fonts.
+    expect(enZh.targetHtmlLang).toBe("zh-Hant-TW");
   });
 });
 
@@ -105,5 +116,20 @@ describe("displayDirection", () => {
     const pending = directionById("en>ko");
     const session = directionById("ko>en");
     expect(displayDirection(5, pending, session)).toBe(session);
+  });
+});
+
+describe("reading an English-to-Chinese phrase", () => {
+  const enZh = directionById("en>zh");
+
+  it("reads the zh slot as the target and ignores ko", () => {
+    const p = phrase({ en: "hello", ko: null, zh: "你好" });
+    expect(sourceTextOf(p, enZh)).toBe("hello");
+    expect(targetTextOf(p, enZh)).toBe("你好");
+  });
+
+  it("treats a missing zh field as no translation yet", () => {
+    const p = phrase({ en: "hello", ko: null });
+    expect(targetTextOf(p, enZh)).toBeNull();
   });
 });

@@ -40,7 +40,7 @@ class FakeAnthropicClient:
         return FakeAnthropicMessage(self.reply)
 
 
-async def test_anthropic_sends_model_system_and_no_forbidden_parameters():
+async def test_anthropic_defaults_to_haiku_5_5_with_thinking_off():
     client = FakeAnthropicClient()
     provider = AnthropicProvider(client, make_settings())
 
@@ -48,10 +48,26 @@ async def test_anthropic_sends_model_system_and_no_forbidden_parameters():
 
     assert result == "안녕하세요"
     assert provider.name == "anthropic"
-    assert client.kwargs["model"] == "claude-haiku-4-5"
+    assert client.kwargs["model"] == "claude-haiku-5-5"
     assert client.kwargs["max_tokens"] == 512
     assert client.kwargs["system"] == "SYSTEM"
     assert client.kwargs["messages"] == [{"role": "user", "content": "PROMPT"}]
+    # Haiku 5.5 thinks by default; a caption cannot afford that pass.
+    # `disabled` is only accepted at effort high or below.
+    assert client.kwargs["thinking"] == {"type": "disabled"}
+    assert client.kwargs["output_config"] == {"effort": "low"}
+    # Haiku 5.5 rejects non-default sampling parameters.
+    for forbidden in ("temperature", "top_p", "top_k", "effort"):
+        assert forbidden not in client.kwargs
+
+
+async def test_anthropic_on_haiku_4_5_sends_no_thinking_or_effort():
+    client = FakeAnthropicClient()
+    provider = AnthropicProvider(client, make_settings(anthropic_model="claude-haiku-4-5"))
+
+    await provider.complete("SYSTEM", "PROMPT")
+
+    assert client.kwargs["model"] == "claude-haiku-4-5"
     # Haiku 4.5 rejects these outright.
     assert "effort" not in client.kwargs
     assert "thinking" not in client.kwargs
@@ -151,21 +167,32 @@ class FakeXAIClient:
         return FakeGroqCompletion(self.reply)
 
 
-async def test_xai_sends_the_model_and_no_reasoning_parameters():
+async def test_xai_on_grok_4_3_turns_reasoning_off():
     client = FakeXAIClient()
-    provider = XAIProvider(client, make_settings())
+    provider = XAIProvider(client, make_settings(xai_model="grok-4.3"))
 
     result = await provider.complete("SYSTEM", "PROMPT")
 
     assert result == "반갑습니다"
     assert provider.name == "xai"
-    assert client.kwargs["model"] == "grok-4.20-0309-non-reasoning"
+    assert client.kwargs["model"] == "grok-4.3"
     # max_tokens is deprecated by xAI in favor of max_completion_tokens;
     # a new integration must use the non-deprecated parameter.
     assert client.kwargs["max_completion_tokens"] == 512
     assert "max_tokens" not in client.kwargs
-    # Unlike Groq/Qwen, this is the non-reasoning variant — there is no
-    # reasoning pass to disable, so these must never be sent.
+    # grok-4.3 reasons by default (~8 s per caption); "none" is mandatory.
+    assert client.kwargs["reasoning_effort"] == "none"
+    # Groq-only parameter.
+    assert "reasoning_format" not in client.kwargs
+
+
+async def test_xai_defaults_to_the_non_reasoning_model_with_no_reasoning_parameters():
+    client = FakeXAIClient()
+    provider = XAIProvider(client, make_settings())
+
+    await provider.complete("SYSTEM", "PROMPT")
+
+    assert client.kwargs["model"] == "grok-4.20-0309-non-reasoning"
     assert "reasoning_effort" not in client.kwargs
     assert "reasoning_format" not in client.kwargs
 
@@ -193,7 +220,7 @@ async def test_xai_handles_a_null_content_response():
 def test_registry_labels_match_the_design():
     labels = {spec.id: spec.label for spec in PROVIDER_REGISTRY}
     assert labels == {
-        "anthropic": "Claude Haiku 4.5",
+        "anthropic": "Claude Haiku 5.5",
         "groq": "Qwen 3.6 · Groq",
         "xai": "Grok 4.20 · xAI",
     }

@@ -37,6 +37,7 @@ def test_caption_out_serializes_with_provider_and_latency():
         "phrase_id": 3,
         "en": "hello",
         "ko": "안녕하세요",
+        "zh": None,
         "status": "final",
         "provider": "anthropic",
         "latency_ms": 420,
@@ -53,9 +54,9 @@ def test_error_out_defaults_to_non_fatal():
     assert payload["fatal"] is False
 
 
-def test_context_pair_holds_both_languages():
-    pair = ContextPair(en="hello", ko="안녕하세요")
-    assert pair.en == "hello" and pair.ko == "안녕하세요"
+def test_context_pair_holds_the_spoken_and_translated_sides():
+    pair = ContextPair(source="hello", target="안녕하세요")
+    assert pair.source == "hello" and pair.target == "안녕하세요"
 
 
 def test_transcript_out_can_carry_english_alone():
@@ -82,10 +83,10 @@ def test_transcript_out_serializes_both_slots_so_the_client_can_tell_them_apart(
     assert dumped["type"] == "transcript"
 
 
-def test_caption_out_still_requires_both_slots():
-    # By the time a caption is emitted, both sides exist. Loosening this to
-    # match to_slots' Optional signature would erase a real guarantee just
-    # to save a narrowing at one call site.
+def test_caption_out_still_requires_both_sides():
+    # By the time a caption is emitted, both sides exist. The slots are
+    # individually optional (which two depends on the direction), so the
+    # guarantee is enforced as "exactly two" instead.
     with pytest.raises(ValidationError):
         CaptionOut(
             phrase_id=0,
@@ -94,3 +95,24 @@ def test_caption_out_still_requires_both_slots():
             provider="anthropic",
             latency_ms=10,
         )
+
+
+def test_caption_out_rejects_all_three_slots_filled():
+    with pytest.raises(ValidationError):
+        CaptionOut(
+            phrase_id=0, en="hello", ko="안녕", zh="你好",
+            status="final", provider="anthropic", latency_ms=10,
+        )
+
+
+def test_caption_out_accepts_an_english_chinese_pair():
+    payload = CaptionOut(
+        phrase_id=0, en="hello", zh="你好",
+        status="final", provider="anthropic", latency_ms=10,
+    ).model_dump()
+    assert (payload["en"], payload["ko"], payload["zh"]) == ("hello", None, "你好")
+
+
+def test_transcript_out_serializes_the_zh_slot_too():
+    dumped = TranscriptOut(phrase_id=0, en="hello").model_dump()
+    assert "zh" in dumped and dumped["zh"] is None

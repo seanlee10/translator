@@ -11,12 +11,13 @@ testability rests on depending on no SDK. Keep it to dataclasses and typing.
 
 from dataclasses import dataclass
 
-from app.models import DirectionName
+from app.models import DirectionName, LanguageSlot
 
 __all__ = [
     "Direction",
     "DIRECTIONS",
     "EN_TO_KO",
+    "EN_TO_ZH",
     "KO_TO_EN",
     "resolve_direction",
 ]
@@ -29,7 +30,11 @@ class Direction:
     id: DirectionName
     # Deepgram's `language` connect parameter. Korean is supported on
     # nova-3 for streaming, so no model change is needed for either value.
+    # No direction transcribes Chinese: zh>en is deliberately not offered.
     deepgram_language: str
+    # The wire LANGUAGE slots the spoken and the produced text land in.
+    source_slot: LanguageSlot
+    target_slot: LanguageSlot
     # Rendered into the shared system prompt.
     source_label: str
     target_label: str
@@ -37,17 +42,22 @@ class Direction:
     # prompt only when Korean is the side being produced. English has no
     # equivalent axis and deliberately gets no knob of its own.
     applies_register: bool
+    # Extra system-prompt rule for this target, or "". Used for Chinese,
+    # where naming the language is not enough: the audience is in Taiwan, so
+    # Simplified characters or Mainland vocabulary are wrong even when the
+    # translation is otherwise correct.
+    target_rule: str = ""
 
     def to_slots(
         self, source_text: str, translated_text: str | None
-    ) -> tuple[str | None, str | None]:
-        """Map (source, translated) onto the (en, ko) LANGUAGE slots.
+    ) -> dict[LanguageSlot, str | None]:
+        """Map (source, translated) onto the en/ko/zh LANGUAGE slots.
 
-        `en` always carries the English text and `ko` always the Korean,
-        whichever of the two was actually spoken. Keeping the slots tied to
-        languages rather than roles is what lets ContextPair stay literally
-        true and keeps existing Arize attributes and benchmark JSON
-        comparable across this change.
+        Returns every slot, ready to splat into TranscriptOut / CaptionOut.
+        `en` always carries English, `ko` Korean and `zh` Chinese, whichever
+        was actually spoken; the slot this direction does not use is None.
+        Keeping the slots tied to languages rather than roles keeps existing
+        Arize attributes and benchmark JSON comparable across directions.
 
         `translated_text` is None for the transcript case, where Deepgram
         text exists but no translation has been attempted yet. The source
@@ -57,14 +67,17 @@ class Direction:
         This is the ONLY place the mapping is decided. Re-deriving it at a
         call site is how the two sides silently disagree.
         """
-        if self.deepgram_language == "en":
-            return source_text, translated_text
-        return translated_text, source_text
+        slots: dict[LanguageSlot, str | None] = {"en": None, "ko": None, "zh": None}
+        slots[self.source_slot] = source_text
+        slots[self.target_slot] = translated_text
+        return slots
 
 
 EN_TO_KO = Direction(
     id="en>ko",
     deepgram_language="en",
+    source_slot="en",
+    target_slot="ko",
     source_label="English",
     target_label="Korean",
     applies_register=True,
@@ -73,14 +86,32 @@ EN_TO_KO = Direction(
 KO_TO_EN = Direction(
     id="ko>en",
     deepgram_language="ko",
+    source_slot="ko",
+    target_slot="en",
     source_label="Korean",
     target_label="English",
     applies_register=False,
 )
 
+EN_TO_ZH = Direction(
+    id="en>zh",
+    deepgram_language="en",
+    source_slot="en",
+    target_slot="zh",
+    source_label="English",
+    target_label="Traditional Chinese (Taiwan)",
+    applies_register=False,
+    target_rule=(
+        "- Write Traditional Chinese characters (繁體中文) with the vocabulary "
+        "and phrasing used in Taiwan (e.g. 軟體, 影片, 資訊, 網路). Never use "
+        "Simplified characters or Mainland-specific terms.\n"
+    ),
+)
+
 DIRECTIONS: dict[DirectionName, Direction] = {
     EN_TO_KO.id: EN_TO_KO,
     KO_TO_EN.id: KO_TO_EN,
+    EN_TO_ZH.id: EN_TO_ZH,
 }
 
 

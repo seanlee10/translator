@@ -1,7 +1,7 @@
 # Live Caption Translator
 
-Speak English into your microphone; see English and Korean captions side by side
-in real time. Deepgram transcribes; Claude Haiku 4.5, Qwen3.6-27B, or Grok 4.20
+Speak English into your microphone; see English and Korean (or Traditional Chinese, for a Taiwanese audience) captions side by side
+in real time. Deepgram transcribes; Claude Haiku 5.5, Qwen3.6-27B, or Grok 4.20
 (non-reasoning) translates — switchable mid-session so you can compare them on
 the same speech.
 
@@ -151,9 +151,14 @@ if one model starts failing, switch to another from the **Model** dropdown at
 any time.
 
 Grok 4.20 is the **non-reasoning** variant (`grok-4.20-0309-non-reasoning`),
-served through xAI's OpenAI-compatible endpoint. Unlike Qwen on Groq, there is
-no reasoning pass to disable for this model — it never receives Groq-specific
-parameters like `reasoning_effort`.
+served through xAI's OpenAI-compatible endpoint; it gets no reasoning
+parameters. `XAI_MODEL=grok-4.3` also works and is sent
+`reasoning_effort="none"`, since it reasons by default (several seconds per
+caption). It benchmarked slower than 4.20, so 4.20 stays the default.
+
+Claude Haiku 5.5 is called with thinking disabled and `effort: low` for the
+same reason. `ANTHROPIC_MODEL=claude-haiku-4-5` still works and gets a plain
+request, since Haiku 4.5 rejects those parameters.
 
 ## Tuning
 
@@ -164,8 +169,8 @@ touching code.
 | Variable | Default | Effect |
 |---|---|---|
 | `DEFAULT_PROVIDER` | `anthropic` | Which model (`anthropic`, `groq`, or `xai`) a new session starts with — falls back to the first configured provider (with a warning) if this one's key isn't set |
-| `DEFAULT_DIRECTION` | `en>ko` | Which way to translate when the browser doesn't say. `en>ko` or `ko>en`. |
-| `ANTHROPIC_MODEL` | `claude-haiku-4-5` | Claude model used for translation |
+| `DEFAULT_DIRECTION` | `en>ko` | Which way to translate when the browser doesn't say. `en>ko`, `ko>en`, or `en>zh` (Traditional Chinese, Taiwan). |
+| `ANTHROPIC_MODEL` | `claude-haiku-5-5` | Claude model used for translation |
 | `GROQ_MODEL` | `qwen/qwen3.6-27b` | Groq model used for translation |
 | `XAI_MODEL` | `grok-4.20-0309-non-reasoning` | xAI Grok model used for translation |
 | `XAI_BASE_URL` | `https://api.x.ai/v1` | xAI's OpenAI-compatible API base URL |

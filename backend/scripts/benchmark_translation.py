@@ -85,7 +85,7 @@ Score each candidate 1 to 5, where 5 is best:
 - accuracy: does it convey the {source_label} faithfully, without adding, \
 dropping, or inventing content?
 - fluency: does it read as natural {target_label} rather than translationese?
-{register_axis}
+{script_note}{register_axis}
 The {source_label} may be an unfinished fragment. A translation that \
 correctly stays a fragment is CORRECT; one that invents an ending is an \
 accuracy failure.
@@ -103,6 +103,13 @@ Respond with ONLY a JSON object, no prose and no code fence:
 # the kind of meaningless-score bug this parameterization exists to avoid.
 _REGISTER_AXIS = "- register: is it consistently in the {register} speech level?\n"
 _REGISTER_FIELD = ', "register": n'
+# The en>zh audience is in Taiwan: a fluent answer in Simplified characters
+# or Mainland vocabulary is still wrong for them, and a judge not told so
+# would happily reward it.
+_TAIWAN_SCRIPT_NOTE = (
+    "  Simplified characters or Mainland-only vocabulary count as fluency "
+    "failures: the audience reads Traditional Chinese as used in Taiwan.\n"
+)
 
 
 def build_judge_system(settings, direction) -> str:
@@ -116,6 +123,7 @@ def build_judge_system(settings, direction) -> str:
         target_label=direction.target_label,
         register_axis=register_axis,
         register_field=register_field,
+        script_note=_TAIWAN_SCRIPT_NOTE if direction.target_slot == "zh" else "",
     )
 
 
@@ -307,14 +315,14 @@ async def translate_all(settings, phrases, run_id, direction, only=None,
 
         for name, payload in done:
             row["translations"][name] = payload
+            # results.json's "en"/"ko" keys are ROLE keys (spoken /
+            # translated), kept as-is so older runs stay readable by
+            # benchmark_dashboard.py. ContextPair is role-based too, so no
+            # language mapping is needed here.
             if payload["ko"]:
-                en, ko = direction.to_slots(phrase["en"], payload["ko"])
-                # to_slots returns Optionals for the transcript case; here
-                # both sides exist by construction (we are inside the
-                # `if payload["ko"]:` guard). Narrow at this one site rather
-                # than loosening ContextPair, matching app/pipeline.py.
-                assert en is not None and ko is not None
-                contexts[name].append(ContextPair(en=en, ko=ko))
+                contexts[name].append(
+                    ContextPair(source=phrase["en"], target=payload["ko"])
+                )
         rows.append(row)
         if (index + 1) % 20 == 0:
             logger.info("  translated %d/%d phrases", index + 1, len(phrases))

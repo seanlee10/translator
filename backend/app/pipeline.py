@@ -121,8 +121,8 @@ class Pipeline:
             state = PhraseState(created_at=self._now())
             self._phrases[event.phrase_id] = state
 
-        en, ko = self._direction.to_slots(event.text, None)
-        await self._emit(TranscriptOut(phrase_id=event.phrase_id, en=en, ko=ko))
+        slots = self._direction.to_slots(event.text, None)
+        await self._emit(TranscriptOut(phrase_id=event.phrase_id, **slots))
 
         if event.is_final:
             # The source-language text is published for finals too, *before*
@@ -174,19 +174,14 @@ class Pipeline:
                         span.set_translation(
                             result.text, result.provider, result.latency_ms
                         )
-                        en, ko = self._direction.to_slots(text, result.text)
-                        # to_slots returns Optionals for the transcript case;
-                        # here both sides exist by construction, and CaptionOut
-                        # requires both. Narrow at this one site rather than
-                        # loosening the model.
-                        assert en is not None and ko is not None
-                        self._context.append(ContextPair(en=en, ko=ko))
+                        self._context.append(
+                            ContextPair(source=text, target=result.text)
+                        )
                         async with self._emit_lock:
                             await self._emit(
                                 CaptionOut(
                                     phrase_id=phrase_id,
-                                    en=en,
-                                    ko=ko,
+                                    **self._direction.to_slots(text, result.text),
                                     status="final",
                                     provider=result.provider,
                                     latency_ms=result.latency_ms,
@@ -254,13 +249,10 @@ class Pipeline:
             if state.closed:
                 return  # sequence guard: a final already won this phrase
 
-            en, ko = self._direction.to_slots(event.text, result.text)
-            assert en is not None and ko is not None
             await self._emit(
                 CaptionOut(
                     phrase_id=event.phrase_id,
-                    en=en,
-                    ko=ko,
+                    **self._direction.to_slots(event.text, result.text),
                     status="provisional",
                     provider=result.provider,
                     latency_ms=result.latency_ms,

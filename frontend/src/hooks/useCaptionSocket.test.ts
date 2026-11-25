@@ -78,3 +78,35 @@ describe("marking a phrase failed", () => {
     expect(errored.status).toBe("error");
   });
 });
+
+describe("an English-to-Chinese phrase", () => {
+  it("keeps an arrived zh translation when a later transcript refines en", () => {
+    const current = existing({ en: "hello", ko: null, zh: "你好", status: "final" });
+    const merged = mergePhrase(current, {
+      phraseId: 0, en: "hello there", ko: null, zh: null,
+      status: "interim", provider: null, latencyMs: null,
+    });
+    expect(merged.zh).toBe("你好");
+    expect(merged.en).toBe("hello there");
+    expect(merged.status).toBe("final");
+  });
+
+  it("clears the zh target on error but keeps the English source", () => {
+    const current = existing({
+      en: "hello", ko: null, zh: "[stale provisional]",
+      status: "provisional", provider: "groq", latencyMs: 9,
+    });
+    const errored = applyPhraseError(current, "boom", "en>zh");
+    expect(errored.en).toBe("hello");
+    expect(errored.zh).toBeNull();
+    expect(errored.status).toBe("error");
+    expect(errored.provider).toBeNull();
+  });
+
+  it("never touches zh when a Korean direction errors", () => {
+    const current = existing({ en: "hello", ko: "안녕", zh: undefined, status: "provisional" });
+    const errored = applyPhraseError(current, "boom", "en>ko");
+    expect(errored.ko).toBeNull();
+    expect(errored.zh ?? null).toBeNull();
+  });
+});

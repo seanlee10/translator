@@ -194,6 +194,7 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .legend-dot { width: 6px; height: 6px; border-radius: 50%; }
 .en-dot { background: #69707b; }
 .ko-dot { background: var(--accent); box-shadow: 0 0 10px rgba(113,112,255,.65); }
+.zh-dot { background: var(--accent); box-shadow: 0 0 10px rgba(113,112,255,.65); }
 .column-headings { display: grid; grid-template-columns: 1fr 1fr; padding: 12px 24px 12px 67px; border-bottom: 1px solid var(--border-subtle); color: #52565d; font-size: 9px; font-weight: 600; letter-spacing: .14em; }
 .column-headings span:last-child { padding-left: 22px; }
 .transcript-wrapper { position: relative; flex: 1; min-height: 440px; }
@@ -225,7 +226,7 @@ button:disabled { cursor: not-allowed; opacity: .38; }
 .caption-col.source p { color: #aeb3bc; font-weight: 400; }
 .caption-col.target p { color: #f2f3f6; font-weight: 510; }
 .language-tag { display: inline-block; margin-top: 11px; color: #555a62; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8px; letter-spacing: .1em; }
-.language-tag.lang-ko { color: #6f70aa; }
+.language-tag.lang-ko, .language-tag.lang-zh { color: #6f70aa; }
 .caption-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .provenance { margin-top: 11px; color: #555a62; font-size: 9px; font-variant-numeric: tabular-nums; }
 /* A row's translation failed: source text still shown (see phraseDisplay.ts —
@@ -411,3 +412,9 @@ button:disabled { cursor: not-allowed; opacity: .38; }
   .overlay-page { padding: 0 3vw 3vh; }
   .overlay-caption { padding: 12px 16px 14px; border-radius: 12px; }
 }
+
+/* Traditional Chinese for a Taiwanese audience: name the TC faces first so
+   the browser never falls back to a Simplified or Japanese glyph set, and
+   drop the negative tracking (.overlay-target) tuned for Latin text, which cramps hanzi. Last in the file so it
+   wins against same-specificity rules above. */
+:lang(zh-Hant) { font-family: "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", Inter, ui-sans-serif, sans-serif; letter-spacing: normal; }

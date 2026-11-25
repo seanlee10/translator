@@ -15,12 +15,16 @@ export type PhraseStatus = "interim" | "provisional" | "final" | "error";
 export interface Phrase {
   phraseId: number;
   // LANGUAGE slots, not source/target roles: `en` is always the English
-  // text and `ko` always the Korean, whichever was spoken. Either may be
-  // null — a transcript event carries only the source side, and a failed
+  // text, `ko` always the Korean and `zh` always the Chinese, whichever was
+  // spoken. Any may be null — a transcript event carries only the source side, and a failed
   // translation never fills the target side at all. Use sourceTextOf /
   // targetTextOf from ../directions to read them by role.
   en: string | null;
   ko: string | null;
+  // Optional (not just nullable) like errorMessage below, so Phrase
+  // literals that predate the en>zh direction keep type-checking; a
+  // missing field means null.
+  zh?: string | null;
   status: PhraseStatus;
   provider: Provider | null;
   latencyMs: number | null;
@@ -46,13 +50,17 @@ type ServerEvent =
       phrase_id: number;
       en: string | null;
       ko: string | null;
+      zh?: string | null;
       status: "interim";
     }
   | {
       type: "caption";
       phrase_id: number;
-      en: string;
-      ko: string;
+      // Exactly two of the three are non-null: the direction's source and
+      // target (enforced server-side by CaptionOut's validator).
+      en: string | null;
+      ko: string | null;
+      zh?: string | null;
       status: "provisional" | "final";
       provider: Provider;
       latency_ms: number;
@@ -96,6 +104,7 @@ export function mergePhrase(existing: Phrase, next: Phrase): Phrase {
         ...existing,
         en: next.en ?? existing.en,
         ko: next.ko ?? existing.ko,
+        zh: next.zh ?? existing.zh,
       };
     }
     return existing;
@@ -109,6 +118,7 @@ export function mergePhrase(existing: Phrase, next: Phrase): Phrase {
       ...existing,
       en: next.en ?? existing.en,
       ko: next.ko ?? existing.ko,
+      zh: next.zh ?? existing.zh,
       status: next.status,
       provider: next.provider ?? existing.provider,
       latencyMs: next.latencyMs ?? existing.latencyMs,
@@ -137,6 +147,7 @@ export function applyPhraseError(
     ...existing,
     en: direction.targetLang === "en" ? null : existing.en,
     ko: direction.targetLang === "ko" ? null : existing.ko,
+    zh: direction.targetLang === "zh" ? null : existing.zh,
     provider: null,
     latencyMs: null,
     status: "error",
@@ -196,6 +207,7 @@ export function useCaptionSocket(url: string) {
           phraseId,
           en: null,
           ko: null,
+          zh: null,
           status: "error",
           provider: null,
           latencyMs: null,
@@ -253,13 +265,14 @@ export function useCaptionSocket(url: string) {
           // keeps the source text on screen even when translation later
           // fails) — but per phraseDisplay.ts, an "interim" status is never
           // terminal, so TranscriptView never renders it as changing text.
-          // It only drives the loader's presence. Exactly one of en/ko is
+          // It only drives the loader's presence. Exactly one of en/ko/zh is
           // non-null on the wire; mergePhrase relies on that to leave the
           // other slot untouched.
           upsert({
             phraseId: message.phrase_id,
             en: message.en ?? null,
             ko: message.ko ?? null,
+            zh: message.zh ?? null,
             status: "interim",
             provider: null,
             latencyMs: null,
@@ -271,6 +284,7 @@ export function useCaptionSocket(url: string) {
             phraseId: message.phrase_id,
             en: message.en,
             ko: message.ko,
+            zh: message.zh ?? null,
             status: message.status,
             provider: message.provider,
             latencyMs: message.latency_ms,

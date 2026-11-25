@@ -1,7 +1,7 @@
 import pytest
 
 from app.config import Settings
-from app.direction import DIRECTIONS, EN_TO_KO, KO_TO_EN
+from app.direction import DIRECTIONS, EN_TO_KO, EN_TO_ZH, KO_TO_EN
 from app.models import ContextPair
 from app.providers import PROVIDER_REGISTRY
 from app.translator import (
@@ -54,7 +54,7 @@ def test_system_prompt_carries_the_configured_register():
 def test_user_prompt_orders_context_before_the_text_to_translate():
     prompt = build_user_prompt(
         "three",
-        [ContextPair(en="one", ko="하나"), ContextPair(en="two", ko="둘")],
+        [ContextPair(source="one", target="하나"), ContextPair(source="two", target="둘")],
         EN_TO_KO,
     )
 
@@ -147,7 +147,7 @@ def test_all_configured_providers_receive_byte_identical_prompts(direction):
     # automatically, and now over DIRECTIONS too.
     settings = make_settings()
     providers = {spec.id: FakeProvider(spec.id) for spec in PROVIDER_REGISTRY}
-    context = (ContextPair(en="hello", ko="안녕하세요"),)
+    context = (ContextPair(source="hello", target="translated"),)
 
     seen = []
     for spec in PROVIDER_REGISTRY:
@@ -183,10 +183,12 @@ def test_the_user_prompt_asks_for_the_target_language():
 
 
 def test_context_lines_read_source_first_in_each_direction():
-    context = (ContextPair(en="hello", ko="안녕하세요"),)
-
-    en_ko = build_user_prompt("more", context, EN_TO_KO)
-    ko_en = build_user_prompt("더", context, KO_TO_EN)
+    en_ko = build_user_prompt(
+        "more", (ContextPair(source="hello", target="안녕하세요"),), EN_TO_KO
+    )
+    ko_en = build_user_prompt(
+        "더", (ContextPair(source="안녕하세요", target="hello"),), KO_TO_EN
+    )
 
     # Same pair, ordered so the model reads source then target — which is
     # the order it is being asked to produce.
@@ -219,3 +221,41 @@ def test_clean_output_strips_english_side_labels():
 def test_clean_output_still_strips_korean_side_labels():
     assert clean_output("한국어: 안녕하세요") == "안녕하세요"
     assert clean_output("번역: 안녕하세요") == "안녕하세요"
+
+
+def test_the_chinese_system_prompt_demands_taiwanese_traditional_script():
+    system = build_system_prompt(make_settings(korean_register="해요체"), EN_TO_ZH)
+    assert "English speech captions into Traditional Chinese (Taiwan)" in system
+    assert "Simplified" in system
+    # The Korean register is not a Chinese knob.
+    assert "해요체" not in system
+
+
+def test_the_korean_prompts_carry_no_chinese_rule():
+    for direction in (EN_TO_KO, KO_TO_EN):
+        assert "Simplified" not in build_system_prompt(make_settings(), direction)
+
+
+def test_chinese_context_lines_are_tagged_en_then_zh():
+    prompt = build_user_prompt(
+        "more", (ContextPair(source="hello", target="你好"),), EN_TO_ZH
+    )
+    assert prompt.index("EN: hello") < prompt.index("ZH: 你好")
+    assert "KO:" not in prompt
+    assert "to Traditional Chinese (Taiwan)" in prompt
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "Chinese: 你好",
+        "Traditional Chinese: 你好",
+        "Traditional Chinese (Taiwan): 你好",
+        "繁體中文：你好",
+        "中文: 你好",
+        "翻譯：「你好」".replace("「", '"').replace("」", '"'),
+        '"你好"',
+    ],
+)
+def test_clean_output_strips_chinese_labels(raw):
+    assert clean_output(raw) == "你好"

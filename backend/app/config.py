@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     # because Deepgram's `language` is fixed at connect time and this app
     # deliberately has no reconnect path (see README's Known limitations).
     default_direction: DirectionName = "en>ko"
-    anthropic_model: str = "claude-haiku-4-5"
+    anthropic_model: str = "claude-haiku-5-5"
     groq_model: str = "qwen/qwen3.6-27b"
     # Host only. The groq SDK appends "/openai/v1/chat/completions" itself, so a
     # base_url that already carries "/openai/v1" yields a doubled path and a 404

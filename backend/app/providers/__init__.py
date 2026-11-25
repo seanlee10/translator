@@ -39,7 +39,7 @@ class ProviderSpec:
 PROVIDER_REGISTRY: tuple[ProviderSpec, ...] = (
     ProviderSpec(
         id="anthropic",
-        label="Claude Haiku 4.5",
+        label="Claude Haiku 5.5",
         model_attr="anthropic_model",
         key_attr="anthropic_api_key",
         build=lambda settings: AnthropicProvider(

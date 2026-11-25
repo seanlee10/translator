@@ -1,13 +1,18 @@
 import type { Phrase } from "./hooks/useCaptionSocket";
 
-export type DirectionId = "en>ko" | "ko>en";
+export type DirectionId = "en>ko" | "ko>en" | "en>zh";
+/** The wire's LANGUAGE slots (TranscriptOut / CaptionOut fields). */
+export type LanguageSlot = "en" | "ko" | "zh";
 
 export interface DirectionInfo {
   id: DirectionId;
   /** Shown on the direction toggle. */
   label: string;
-  sourceLang: "en" | "ko";
-  targetLang: "en" | "ko";
+  sourceLang: LanguageSlot;
+  targetLang: LanguageSlot;
+  /** BCP 47 tag for the target text's `lang` attribute, so the browser
+   * picks a Traditional-Chinese (not Simplified/Japanese) glyph set. */
+  targetHtmlLang: string;
   /** Column and legend copy. */
   sourceLabel: string;
   targetLabel: string;
@@ -21,7 +26,7 @@ export interface DirectionInfo {
  *
  * `useProviders` fetches GET /providers because WHICH providers exist varies
  * at runtime with which API keys are configured. Directions have no such
- * variance — there are exactly two, always — so an endpoint would imitate a
+ * variance — the set is fixed at build time — so an endpoint would imitate a
  * pattern whose justification does not apply. The accepted cost is that the
  * set is declared in two places; this file is the second one.
  */
@@ -33,6 +38,7 @@ export const DIRECTIONS: DirectionInfo[] = [
     targetLang: "ko",
     sourceLabel: "English",
     targetLabel: "한국어",
+    targetHtmlLang: "ko",
     translatingPlaceholder: "번역 중…",
   },
   {
@@ -42,7 +48,18 @@ export const DIRECTIONS: DirectionInfo[] = [
     targetLang: "en",
     sourceLabel: "한국어",
     targetLabel: "English",
+    targetHtmlLang: "en",
     translatingPlaceholder: "Translating…",
+  },
+  {
+    id: "en>zh",
+    label: "English → 繁體中文",
+    sourceLang: "en",
+    targetLang: "zh",
+    sourceLabel: "English",
+    targetLabel: "繁體中文",
+    targetHtmlLang: "zh-Hant-TW",
+    translatingPlaceholder: "翻譯中…",
   },
 ];
 
@@ -53,24 +70,25 @@ export function directionById(id: string): DirectionInfo {
   return DIRECTIONS.find((d) => d.id === id) ?? DEFAULT_DIRECTION;
 }
 
+type Slotted = Pick<Phrase, "en" | "ko"> & { zh?: string | null };
+
+/** Read one language slot; a missing `zh` reads as null. */
+function slot(phrase: Slotted, lang: LanguageSlot): string | null {
+  return phrase[lang] ?? null;
+}
+
 /**
- * The spoken side of a phrase. The wire's `en`/`ko` are LANGUAGE slots, so
- * role is derived here — the frontend mirror of Direction.to_slots, and the
- * only place the frontend decides it.
+ * The spoken side of a phrase. The wire's `en`/`ko`/`zh` are LANGUAGE
+ * slots, so role is derived here — the frontend mirror of
+ * Direction.to_slots, and the only place the frontend decides it.
  */
-export function sourceTextOf(
-  phrase: Pick<Phrase, "en" | "ko">,
-  direction: DirectionInfo,
-): string | null {
-  return direction.sourceLang === "en" ? phrase.en : phrase.ko;
+export function sourceTextOf(phrase: Slotted, direction: DirectionInfo): string | null {
+  return slot(phrase, direction.sourceLang);
 }
 
 /** The produced side of a phrase, or null before it arrives. */
-export function targetTextOf(
-  phrase: Pick<Phrase, "en" | "ko">,
-  direction: DirectionInfo,
-): string | null {
-  return direction.targetLang === "en" ? phrase.en : phrase.ko;
+export function targetTextOf(phrase: Slotted, direction: DirectionInfo): string | null {
+  return slot(phrase, direction.targetLang);
 }
 
 /**

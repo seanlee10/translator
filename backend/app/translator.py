@@ -15,7 +15,7 @@ commentary, no romanization, no explanation.
 - The input may be an unfinished fragment of a sentence. Translate it AS a \
 fragment. Never invent or complete the rest of the sentence.
 - Preserve proper nouns, product names, and acronyms.
-{register_rule}- Recent context is provided only to keep terminology and \
+{register_rule}{target_rule}- Recent context is provided only to keep terminology and \
 register consistent. Do not translate the context; translate only the final \
 line.
 """
@@ -24,14 +24,26 @@ _REGISTER_RULE = "- Use the {register} speech level consistently.\n"
 
 # Models label their output in the TARGET language, so both sides are needed:
 # "한국어:" only ever appears going into Korean, "English:" only going into
-# English. "translation:" is direction-neutral and covers both.
+# English, the Chinese ones only going into Chinese. "translation:" is
+# direction-neutral. Longer prefixes come before their own prefixes
+# ("traditional chinese:" before "chinese:") so the whole label is stripped.
+# Full-width colons are listed too: Chinese output often uses "：".
 _LABEL_PREFIXES = (
     "korean:",
     "english:",
+    "traditional chinese (taiwan):",
+    "traditional chinese:",
+    "chinese:",
     "translation:",
     "번역:",
     "한국어:",
     "영어:",
+    "繁體中文:",
+    "繁體中文：",
+    "中文:",
+    "中文：",
+    "翻譯:",
+    "翻譯：",
 )
 _QUOTE_PAIRS = {'"': '"', "'": "'", "“": "”", "‘": "’"}
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
@@ -60,6 +72,7 @@ def build_system_prompt(settings: Settings, direction: Direction) -> str:
         source_label=direction.source_label,
         target_label=direction.target_label,
         register_rule=register_rule,
+        target_rule=direction.target_rule,
     )
 
 
@@ -69,11 +82,11 @@ def build_user_prompt(
     parts: list[str] = []
     if context:
         # Ordered source-then-target: the model reads the pair in the same
-        # order it is being asked to produce one.
-        if direction.applies_register:
-            lines = "\n".join(f"EN: {p.en}\nKO: {p.ko}" for p in context)
-        else:
-            lines = "\n".join(f"KO: {p.ko}\nEN: {p.en}" for p in context)
+        # order it is being asked to produce one. Tags name the LANGUAGE
+        # (EN:/KO:/ZH:), taken from the direction's slots.
+        src = direction.source_slot.upper()
+        tgt = direction.target_slot.upper()
+        lines = "\n".join(f"{src}: {p.source}\n{tgt}: {p.target}" for p in context)
         parts.append(f"Recent context (do not translate):\n{lines}")
     parts.append(f"Translate this line to {direction.target_label}:\n{text}")
     return "\n\n".join(parts)

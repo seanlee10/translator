@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from pydantic import BaseModel
 
 from app.config import Settings
-from app.direction import EN_TO_KO, KO_TO_EN
+from app.direction import EN_TO_KO, EN_TO_ZH, KO_TO_EN
 from app.models import (
     CaptionOut,
     ErrorOut,
@@ -43,7 +43,7 @@ class FakeTranslator:
         self.calls: list[tuple[str, list[tuple[str, str]]]] = []
 
     async def __call__(self, text, context):
-        self.calls.append((text, [(c.en, c.ko) for c in context]))
+        self.calls.append((text, [(c.source, c.target) for c in context]))
         return TranslationResult(
             text=f"[ko]{text}", provider=self.provider, latency_ms=100
         )
@@ -174,7 +174,7 @@ async def test_context_order_is_correct_despite_uneven_latency():
 
         async def __call__(self, text, context):
             self.n += 1
-            self.calls.append((text, [(c.en, c.ko) for c in context]))
+            self.calls.append((text, [(c.source, c.target) for c in context]))
             await asyncio.sleep(0.05 if self.n == 1 else 0)
             return TranslationResult(
                 text=f"[ko]{text}", provider="anthropic", latency_ms=1
@@ -658,10 +658,10 @@ async def test_the_english_to_korean_direction_is_unchanged():
     assert caption.ko == "안녕하세요"
 
 
-async def test_rolling_context_stores_each_language_in_its_own_slot():
-    # ContextPair(en=, ko=) stays literally true in both directions, which
-    # is what lets build_user_prompt render it without knowing how it was
-    # produced.
+async def test_rolling_context_stores_spoken_then_translated():
+    # ContextPair is role-based: `source` is what was spoken, `target` what
+    # was produced, whichever languages those are. build_user_prompt labels
+    # them from the direction.
     seen_context = []
 
     async def emit(message):
@@ -680,8 +680,8 @@ async def test_rolling_context_stores_each_language_in_its_own_slot():
     await pipeline.aclose()
 
     pair = seen_context[-1][0]
-    assert pair.ko == "안녕"
-    assert pair.en == "hello"
+    assert pair.source == "안녕"
+    assert pair.target == "hello"
 
 
 async def test_a_failed_translation_still_leaves_the_source_text_published():
@@ -735,3 +735,50 @@ async def test_the_phrase_span_receives_the_direction_id():
     assert recorded["direction_id"] == "ko>en"
     # The span's input is the SOURCE text, in both directions.
     assert recorded["text"] == "안녕"
+
+
+async def test_english_to_chinese_fills_en_and_zh_and_never_ko():
+    emitted = []
+
+    async def emit(message):
+        emitted.append(message)
+
+    async def translate(text, context):
+        return TranslationResult(text="你好", provider="anthropic", latency_ms=12)
+
+    pipeline = Pipeline(translate, emit, make_settings(), EN_TO_ZH)
+    await pipeline.start()
+    await pipeline.handle(TranscriptEvent(phrase_id=0, text="hello", is_final=True))
+    await pipeline.drain()
+    await pipeline.aclose()
+
+    transcript = [m for m in emitted if isinstance(m, TranscriptOut)][0]
+    assert (transcript.en, transcript.ko, transcript.zh) == ("hello", None, None)
+    caption = [m for m in emitted if isinstance(m, CaptionOut)][0]
+    assert (caption.en, caption.ko, caption.zh) == ("hello", None, "你好")
+    assert caption.status == "final"
+
+
+async def test_the_korean_directions_never_populate_zh():
+    for direction, spoken, produced in (
+        (EN_TO_KO, "hello", "안녕"),
+        (KO_TO_EN, "안녕", "hello"),
+    ):
+        emitted = []
+
+        async def emit(message):
+            emitted.append(message)
+
+        async def translate(text, context, produced=produced):
+            return TranslationResult(text=produced, provider="anthropic", latency_ms=1)
+
+        pipeline = Pipeline(translate, emit, make_settings(), direction)
+        await pipeline.start()
+        await pipeline.handle(TranscriptEvent(phrase_id=0, text=spoken, is_final=True))
+        await pipeline.drain()
+        await pipeline.aclose()
+
+        assert emitted, direction.id
+        for message in emitted:
+            if isinstance(message, (TranscriptOut, CaptionOut)):
+                assert message.zh is None, direction.id

@@ -32,6 +32,7 @@ CSS = """
   --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
   --ko:"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic","Nanum Gothic",
        system-ui,sans-serif;
+  --zh:"PingFang TC","Noto Sans TC","Microsoft JhengHei",system-ui,sans-serif;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -148,6 +149,7 @@ td { padding:12px 14px; border-bottom:1px solid var(--line); vertical-align:top;
 tr:last-child td { border-bottom:0; }
 td.en { color:var(--ink); max-width:290px; }
 td.ko { font-family:var(--ko); max-width:270px; }
+td.ko.zh { font-family:var(--zh); }
 td.ko.best { background:color-mix(in srgb,var(--good) 9%,transparent); }
 .tick {
   display:inline-flex; align-items:center; gap:5px; margin-top:5px;
@@ -242,10 +244,16 @@ def render(results: dict) -> str:
     models = results.get("models", {})
     # This script deliberately does not import app.direction — it only ever
     # reads results.json, so it can re-render without the app package or a
-    # working directory. Same two directions, small local label instead.
+    # working directory. Same directions, small local label table instead.
+    # Note results.json's "en"/"ko" row keys are ROLE keys (spoken /
+    # translated), not languages.
     direction = results.get("direction", "en>ko")
-    source_label = "korean" if direction == "ko>en" else "english"
-    target_label = "english" if direction == "ko>en" else "korean"
+    source_label, target_label = {
+        "en>ko": ("english", "korean"),
+        "ko>en": ("korean", "english"),
+        "en>zh": ("english", "traditional chinese"),
+    }.get(direction, ("english", "korean"))
+    target_cls = " zh" if direction == "en>zh" else ""
 
     flags = {n: throttle(rows, n) for n in providers}
     judged_any = any(s["judged"] for s in summary.values())
@@ -269,7 +277,7 @@ def render(results: dict) -> str:
     out.append("<h1>Translating a commencement address, live</h1>")
     out.append(
         f'<p class="sub">Deepgram transcribed the audio once; every model then '
-        f"translated that identical phrase list into {esc(target_label.capitalize())}, each "
+        f"translated that identical phrase list into {esc(target_label.title())}, each "
         f"carrying its own rolling context exactly as it would in a live "
         f"session. Quality comes from a blind three-way comparison where the "
         f"models were relabelled A/B/C.</p>"
@@ -400,7 +408,7 @@ def render(results: dict) -> str:
         out.append("</td>")
         for name in providers:
             t = row["translations"].get(name, {})
-            cls = "ko best" if name == winner else "ko"
+            cls = ("ko best" if name == winner else "ko") + target_cls
             out.append(f'<td class="{cls}">')
             if t.get("error"):
                 out.append(f'<span class="err">{esc(t["error"])}</span>')

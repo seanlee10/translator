@@ -154,8 +154,8 @@ def test_providers_endpoint_returns_all_three_when_all_keys_are_configured():
     assert {p["id"] for p in body} == {"anthropic", "groq", "xai"}
     assert {
         "id": "anthropic",
-        "label": "Claude Haiku 4.5",
-        "model": "claude-haiku-4-5",
+        "label": "Claude Haiku 5.5",
+        "model": "claude-haiku-5-5",
     } in body
 
 
@@ -193,6 +193,7 @@ def test_a_scripted_utterance_produces_transcript_then_caption():
             "phrase_id": 0,
             "en": "hel",
             "ko": None,
+            "zh": None,
             "status": "interim",
         }
         # The final's English is published before it is enqueued for
@@ -203,6 +204,7 @@ def test_a_scripted_utterance_produces_transcript_then_caption():
             "phrase_id": 0,
             "en": "hello there",
             "ko": None,
+            "zh": None,
             "status": "interim",
         }
         assert ws.receive_json() == {
@@ -210,6 +212,7 @@ def test_a_scripted_utterance_produces_transcript_then_caption():
             "phrase_id": 0,
             "en": "hello there",
             "ko": "[anthropic]hello there",
+            "zh": None,
             "status": "final",
             "provider": "anthropic",
             "latency_ms": 7,
@@ -315,6 +318,7 @@ def test_the_translate_interims_toggle_actually_changes_behavior():
             "phrase_id": 0,
             "en": "hel",
             "ko": None,
+            "zh": None,
             "status": "interim",
         }
 
@@ -330,6 +334,7 @@ def test_the_translate_interims_toggle_actually_changes_behavior():
         "phrase_id": 0,
         "en": "hello",
         "ko": "[anthropic]hello",
+        "zh": None,
         "status": "final",
         "provider": "anthropic",
         "latency_ms": 7,
@@ -512,6 +517,7 @@ def test_translate_interims_false_as_a_json_string_is_not_truthy():
             "phrase_id": 0,
             "en": "hel",
             "ko": None,
+            "zh": None,
             "status": "interim",
         }
 
@@ -643,3 +649,30 @@ def test_config_still_accepts_provider_alongside_a_rejected_direction():
         ws.receive_json()  # the direction-rejection error
 
     assert FakeRouter.last.provider == "groq"
+
+
+def test_an_english_to_chinese_session_captions_into_the_zh_slot():
+    client = build_client(translate_interims=False)
+    FakeSource.script = [
+        TranscriptEvent(phrase_id=0, text="hello there", is_final=True),
+    ]
+
+    with client.websocket_connect("/ws/session") as ws:
+        ws.receive_json()  # connected
+        ws.send_json({"type": "start", "sample_rate": 48000, "direction": "en>zh"})
+        ws.receive_json()  # listening
+        ws.send_bytes(b"\x00\x01" * 160)
+
+        transcript = ws.receive_json()
+        assert (transcript["en"], transcript["ko"], transcript["zh"]) == (
+            "hello there", None, None,
+        )
+        caption = ws.receive_json()
+        assert caption["type"] == "caption"
+        assert caption["en"] == "hello there"
+        assert caption["ko"] is None
+        assert caption["zh"] == "[anthropic]hello there"
+
+    # English is still what Deepgram listens for.
+    assert FakeSource.last_direction.id == "en>zh"
+    assert FakeSource.last_direction.deepgram_language == "en"

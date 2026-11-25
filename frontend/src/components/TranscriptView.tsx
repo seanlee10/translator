@@ -123,7 +123,9 @@ export function TranscriptView({ phrases, fontSize, providers, direction }: Prop
                       </>
                     ) : (
                       <>
-                        <p>{targetTextOf(phrase, direction) ?? ""}</p>
+                        <p lang={direction.targetHtmlLang}>
+                          {targetTextOf(phrase, direction) ?? ""}
+                        </p>
                         <div className="caption-meta">
                           <span className={`language-tag lang-${direction.targetLang}`}>
                             {direction.targetLang.toUpperCase()}
